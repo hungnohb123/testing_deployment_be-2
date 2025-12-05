@@ -1,0 +1,15 @@
+{
+  "name": "testing_deployment_be_2",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo \"no build step\""
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.35.7",
+    "@vercel/kv": "^1.0.0",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.13",
+    "express": "^4.21.0"
+  }
+}
