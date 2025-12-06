@@ -1,33 +1,33 @@
-// PATCH: cập nhật trạng thái thanh toán (state) cho payment
-// index.js
+// app.js (hoặc index.js nếu bạn dùng tên này)
+// Backend dùng Express nhưng chạy trên Vercel serverless
+// Database: Vercel KV (Upstash Redis – NoSQL, key-value)
+
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
 dayjs.extend(utc);
 dayjs.extend(timezone);
+
 const express = require("express");
-const mysql = require("mysql2");
+const cors = require("cors");
+const { kv } = require("@vercel/kv");
+
 const app = express();
-const port = process.env.PORT;
-const cors = require("cors"); // <-- THÊM DÒNG NÀY
 
 app.use(express.json());
 
+// ================== CORS ==================
 const allowedOrigins = [
-  "https://it-3180-2025-1-se-08.vercel.app", // Link FE 1 của bạn
-  "https://testing-deployment-fe.vercel.app", // Link FE 2
-  "http://localhost:3000", // Thêm các cổng local khác nếu cần
+  "https://it-3180-2025-1-se-08.vercel.app",
+  "https://testing-deployment-fe.vercel.app",
+  "http://localhost:3000",
 ];
 
 const corsOptions = {
-  // 2. Sửa "origin" để dùng mảng
   origin: function (origin, callback) {
-    // Kiểm tra xem 'origin' (nơi gửi request) có nằm trong danh sách 'allowedOrigins' không
     if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-      // Nếu có (hoặc nếu là request không có origin như Postman), cho phép
       callback(null, true);
     } else {
-      // Nếu không, từ chối
       callback(new Error("Not allowed by CORS"));
     }
   },
@@ -38,145 +38,167 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// --- MySQL connection (sử dụng POOL) ---
-const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  ssl: {
-    ca: process.env.VERCEL_CA_CERT,
-    rejectUnauthorized: false,
-  },
-});
+// ================== HELPER: ID & KEY ==================
 
-// -------- Root --------
+async function nextId(seqKey) {
+  // Tạo id tự tăng (1,2,3,...) bằng KV
+  const id = await kv.incr(seqKey);
+  return id;
+}
+
+function residentKey(id) {
+  return `resident:${id}`;
+}
+
+function paymentKey(id) {
+  return `payment:${id}`;
+}
+
+function notificationKey(id) {
+  return `notification:${id}`;
+}
+
+// ================== ROOT & HEALTH ==================
 app.get("/", (req, res) => {
-  res.send("Hello Express!");
+  res.send("Hello Express + Vercel KV!");
 });
 
-// -------- US-001: Residents CRUD --------
+app.get("/health", (req, res) => res.json({ ok: true }));
+
+// ====================================================
+// =============== RESIDENTS (US-001) =================
+// ====================================================
+
+// helper: cập nhật index login & chủ hộ theo căn hộ
+async function updateResidentIndexes(oldUser, newUser) {
+  // Login email
+  if (oldUser?.email && oldUser.email !== newUser.email) {
+    await kv.del(`login:email:${oldUser.email}`);
+  }
+  if (newUser.email) {
+    await kv.set(`login:email:${newUser.email}`, newUser.id);
+  }
+
+  // Login phone
+  if (oldUser?.phone && oldUser.phone !== newUser.phone) {
+    await kv.del(`login:phone:${oldUser.phone}`);
+  }
+  if (newUser.phone) {
+    await kv.set(`login:phone:${newUser.phone}`, newUser.id);
+  }
+
+  // Index chủ hộ theo căn hộ
+  const oldIsOwner =
+    oldUser &&
+    oldUser.residency_status &&
+    String(oldUser.residency_status).toLowerCase() === "chủ hộ";
+  const newIsOwner =
+    newUser &&
+    newUser.residency_status &&
+    String(newUser.residency_status).toLowerCase() === "chủ hộ";
+
+  if (oldIsOwner && (!newIsOwner || oldUser.apartment_id !== newUser.apartment_id)) {
+    await kv.del(`resident:ownerByApartment:${oldUser.apartment_id}`);
+  }
+  if (newIsOwner) {
+    await kv.set(
+      `resident:ownerByApartment:${newUser.apartment_id}`,
+      newUser.id
+    );
+  }
+}
 
 // GET all users
-app.get("/residents", (req, res) => {
-  const sql = `SELECT * FROM user ORDER BY id`;
-  db.query(sql, (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(results);
-  });
+app.get("/residents", async (req, res) => {
+  try {
+    const ids = await kv.zrange("residents:all", 0, -1);
+    const residents = await Promise.all(
+      ids.map((id) => kv.get(residentKey(id)))
+    );
+    res.json(residents.filter(Boolean));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET single user
-app.get("/residents/:id", (req, res) => {
+app.get("/residents/:id", async (req, res) => {
   const { id } = req.params;
-  const sql = `SELECT * FROM user WHERE id = ?`;
-  db.query(sql, [id], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (results.length === 0)
-      return res.status(404).json({ error: "User not found" });
-    res.json(results[0]);
-  });
+  try {
+    const r = await kv.get(residentKey(id));
+    if (!r) return res.status(404).json({ error: "User not found" });
+    res.json(r);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST create user
-app.post("/residents", (req, res) => {
-  const {
-    first_name,
-    last_name,
-    phone,
-    apartment_id,
-    cccd,
-    birth_date,
-    role,
-    residency_status,
-    email,
-    password,
-  } = req.body || {};
-  if (!first_name || !last_name || !phone || !apartment_id || !password) {
-    return res.status(400).json({
-      error:
-        "Thiếu trường bắt buộc: first_name, last_name, phone, apartment_id, password",
-    });
-  }
+app.post("/residents", async (req, res) => {
+  try {
+    const {
+      first_name,
+      last_name,
+      phone,
+      apartment_id,
+      cccd,
+      birth_date,
+      role,
+      residency_status,
+      email,
+      password,
+    } = req.body || {};
+    if (!first_name || !last_name || !phone || !apartment_id || !password) {
+      return res.status(400).json({
+        error:
+          "Thiếu trường bắt buộc: first_name, last_name, phone, apartment_id, password",
+      });
+    }
 
-  const full_name = `${first_name.trim()} ${last_name.trim()}`;
-  const sql = `INSERT INTO user 
-    (full_name, first_name, last_name, phone, apartment_id, cccd, birth_date, role, residency_status, email, password)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const id = await nextId("seq:resident");
+    const full_name = `${first_name.trim()} ${last_name.trim()}`;
 
-  db.query(
-    sql,
-    [
+    const user = {
+      id,
       full_name,
       first_name,
       last_name,
       phone,
       apartment_id,
-      cccd || null,
-      birth_date || null,
-      role || null,
-      residency_status || null,
-      email || null,
+      cccd: cccd || null,
+      birth_date: birth_date || null,
+      role: role || null,
+      residency_status: residency_status || null,
+      email: email || null,
       password,
-    ],
-    (err, result) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res
-        .status(201)
-        .json({ message: "Thêm người dùng thành công", id: result.insertId });
-    }
-  );
+      state: "active",
+    };
+
+    await kv.set(residentKey(id), user);
+    await kv.zadd("residents:all", { score: id, member: String(id) });
+    await updateResidentIndexes(null, user);
+
+    res
+      .status(201)
+      .json({ message: "Thêm người dùng thành công", id: id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // PUT update user
-app.put("/residents/:id", (req, res) => {
+app.put("/residents/:id", async (req, res) => {
   const { id } = req.params;
-  const {
-    first_name,
-    last_name,
-    phone,
-    apartment_id,
-    state,
-    cccd,
-    birth_date,
-    role,
-    residency_status,
-    email,
-    password,
-  } = req.body || {};
   if (!id) return res.status(400).json({ error: "Thiếu id" });
 
-  const full_name =
-    first_name && last_name
-      ? `${first_name.trim()} ${last_name.trim()}`
-      : undefined;
+  try {
+    const existing = await kv.get(residentKey(id));
+    if (!existing)
+      return res.status(404).json({ error: "Không tìm thấy người dùng" });
 
-  const sql = `
-    UPDATE user
-    SET first_name = COALESCE(?, first_name),
-        last_name = COALESCE(?, last_name),
-        full_name = COALESCE(?, full_name),
-        phone = COALESCE(?, phone),
-        apartment_id = COALESCE(?, apartment_id),
-        state = COALESCE(?, state),
-        cccd = COALESCE(?, cccd),
-        birth_date = COALESCE(?, birth_date),
-        role = COALESCE(?, role),
-        residency_status = COALESCE(?, residency_status),
-        email = COALESCE(?, email),
-        password = COALESCE(?, password)
-    WHERE id = ?
-  `;
-  db.query(
-    sql,
-    [
+    const {
       first_name,
       last_name,
-      full_name,
       phone,
       apartment_id,
       state,
@@ -186,29 +208,88 @@ app.put("/residents/:id", (req, res) => {
       residency_status,
       email,
       password,
-      id,
-    ],
-    (err, result) => {
-      if (err) return res.status(500).json({ error: err.message });
-      if (result.affectedRows === 0)
-        return res.status(404).json({ error: "Không tìm thấy người dùng" });
-      res.json({ message: "Cập nhật thành công" });
+    } = req.body || {};
+
+    const updated = { ...existing };
+
+    if (first_name !== undefined && first_name !== null)
+      updated.first_name = first_name;
+    if (last_name !== undefined && last_name !== null)
+      updated.last_name = last_name;
+
+    if (
+      (first_name !== undefined && first_name !== null) ||
+      (last_name !== undefined && last_name !== null)
+    ) {
+      const f = first_name !== undefined ? first_name : existing.first_name;
+      const l = last_name !== undefined ? last_name : existing.last_name;
+      updated.full_name = `${(f || "").trim()} ${(l || "").trim()}`;
     }
-  );
+
+    if (phone !== undefined && phone !== null) updated.phone = phone;
+    if (apartment_id !== undefined && apartment_id !== null)
+      updated.apartment_id = apartment_id;
+    if (state !== undefined && state !== null) updated.state = state;
+    if (cccd !== undefined && cccd !== null) updated.cccd = cccd;
+    if (birth_date !== undefined && birth_date !== null)
+      updated.birth_date = birth_date;
+    if (role !== undefined && role !== null) updated.role = role;
+    if (residency_status !== undefined && residency_status !== null)
+      updated.residency_status = residency_status;
+    if (email !== undefined && email !== null) updated.email = email;
+    if (password !== undefined && password !== null)
+      updated.password = password;
+
+    await kv.set(residentKey(id), updated);
+    await updateResidentIndexes(existing, updated);
+
+    res.json({ message: "Cập nhật thành công" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// DELETE user
-app.delete("/residents/:id", (req, res) => {
+// DELETE user (soft delete: state = 'inactive')
+app.delete("/residents/:id", async (req, res) => {
   const { id } = req.params;
-  db.query("DELETE FROM user WHERE id = ?", [id], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (result.affectedRows === 0)
-      return res.status(404).json({ error: "Không tìm thấy người dùng" });
-    res.json({ message: "Xóa thành công" });
-  });
+  if (!id) return res.status(400).json({ error: "Thiếu id" });
+
+  try {
+    const user = await kv.get(residentKey(id));
+    if (!user) {
+      return res.status(404).json({ error: "Không tìm thấy cư dân" });
+    }
+
+    const currentState = user.state;
+    if (currentState && String(currentState).toLowerCase() === "inactive") {
+      return res.json({
+        message: "Resident đã ở trạng thái inactive (đã xóa mềm trước đó)",
+      });
+    }
+
+    user.state = "inactive";
+    await kv.set(residentKey(id), user);
+
+    res.json({
+      message: "Resident soft-deleted (state set to inactive)",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// -------- US-008: Payments --------
+// ====================================================
+// =================== PAYMENTS (US-008) ==============
+// ====================================================
+
+function decoratePayment(p) {
+  if (!p) return p;
+  return {
+    ...p,
+    is_paid: p.state === 1,
+    status_text: p.state === 1 ? "Đã thanh toán" : "Chưa thanh toán",
+  };
+}
 
 // GET mock fees
 app.get("/fees", (req, res) => {
@@ -219,524 +300,444 @@ app.get("/fees", (req, res) => {
 });
 
 // POST create payment (generate transaction_ref)
-app.post("/payment", (req, res) => {
-  const { resident_id, amount, feetype, payment_form } = req.body || {};
-  if (!resident_id || !amount) {
-    return res.status(400).json({ error: "Thiếu resident_id hoặc amount" });
-  }
+app.post("/payment", async (req, res) => {
+  try {
+    const { resident_id, amount, feetype, payment_form } = req.body || {};
+    if (!resident_id || !amount) {
+      return res.status(400).json({ error: "Thiếu resident_id hoặc amount" });
+    }
 
-  // transaction ref
-  const transactionRef = `TRX_${Date.now()}`;
+    const id = await nextId("seq:payment");
+    const transaction_ref = `TRX_${Date.now()}`;
+    const nowIso = new Date().toISOString();
 
-  const sql = `INSERT INTO payments 
-    (resident_id, amount, state, transaction_ref, feetype, payment_date, payment_form)
-    VALUES (?, ?, 0, ?, ?, NULL, ?)`;
-
-  db.query(
-    sql,
-    [
+    const payment = {
+      id,
       resident_id,
       amount,
-      transactionRef,
-      feetype || null,
-      payment_form || null,
-    ],
-    (err, result) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({
-        message: "Tạo giao dịch thành công",
-        transaction_ref: transactionRef,
-        payment_id: result.insertId,
-      });
-    }
-  );
+      state: 0,
+      transaction_ref,
+      feetype: feetype || null,
+      payment_date: null,
+      payment_form: payment_form || null,
+      provider_tx_id: null,
+      payer_account: null,
+      payer_name: null,
+      verification_method: null,
+      verified_at: null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    await kv.set(paymentKey(id), payment);
+    await kv.zadd("payments:all", {
+      score: Date.parse(nowIso),
+      member: String(id),
+    });
+    await kv.zadd(`payments:resident:${resident_id}`, {
+      score: Date.parse(nowIso),
+      member: String(id),
+    });
+    await kv.set(`payment:txref:${transaction_ref}`, id);
+
+    res.status(201).json({
+      message: "Tạo giao dịch thành công",
+      transaction_ref,
+      payment_id: id,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST payment callback (webhook mock)
-app.post("/payment/callback", (req, res) => {
-  console.log("callback body:", req.body);
+app.post("/payment/callback", async (req, res) => {
+  try {
+    console.log("callback body:", req.body);
 
-  const transaction_ref = String(req.body?.transaction_ref || "").trim();
-  const statusRaw = String(req.body?.status || "").trim();
-  const status = statusRaw.toLowerCase();
+    const transaction_ref = String(req.body?.transaction_ref || "").trim();
+    const statusRaw = String(req.body?.status || "").trim();
+    const status = statusRaw.toLowerCase();
 
-  // Accept 'success' and 'failed'
-  const allowed = new Set(["success", "failed"]);
-  if (!transaction_ref || !allowed.has(status)) {
-    return res
-      .status(400)
-      .json({ error: "transaction_ref hoặc status không hợp lệ" });
-  }
+    const allowed = new Set(["success", "failed"]);
+    if (!transaction_ref || !allowed.has(status)) {
+      return res
+        .status(400)
+        .json({ error: "transaction_ref hoặc status không hợp lệ" });
+    }
 
-  // If success -> set state = 1 (paid). If failed -> state stays 0 (or mark failed; we keep it 0).
-  if (status === "success") {
-    const sql = `
-      UPDATE payments
-      SET state = 1,
-          provider_tx_id = COALESCE(?, provider_tx_id),
-          payer_account = COALESCE(?, payer_account),
-          payer_name = COALESCE(?, payer_name),
-          verification_method = 'webhook',
-          verified_at = NOW(),
-          updated_at = NOW()
-      WHERE transaction_ref = ? AND state = 0
-    `;
+    const paymentId = await kv.get(`payment:txref:${transaction_ref}`);
+    if (!paymentId) {
+      return res.status(409).json({
+        error: "Không tìm thấy transaction pending hoặc đã được xác nhận",
+      });
+    }
+    const key = paymentKey(paymentId);
+    const payment = await kv.get(key);
+    if (!payment || payment.state !== 0) {
+      return res.status(409).json({
+        error:
+          "Không cập nhật được: không tìm thấy transaction pending hoặc đã được xác nhận trước đó",
+      });
+    }
+
     const { provider_tx_id, payer_account, payer_name } = req.body;
-    db.query(
-      sql,
-      [
-        provider_tx_id || null,
-        payer_account || null,
-        payer_name || null,
-        transaction_ref,
-      ],
-      (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (result.affectedRows === 0) {
-          return res.status(409).json({
-            error:
-              "Không cập nhật được: không tìm thấy transaction pending hoặc đã được xác nhận trước đó",
-          });
-        }
-        return res.json({
-          message: "Cập nhật trạng thái giao dịch thành công",
-        });
-      }
-    );
-  } else {
-    // failed case: update provider_tx_id and leave state = 0 (pending/failed); we do idempotent update only if state = 0
-    const sql = `
-      UPDATE payments
-      SET provider_tx_id = COALESCE(?, provider_tx_id),
-          payer_account = COALESCE(?, payer_account),
-          payer_name = COALESCE(?, payer_name),
-          verification_method = 'webhook',
-          updated_at = NOW()
-      WHERE transaction_ref = ? AND state = 0
-    `;
-    const { provider_tx_id, payer_account, payer_name } = req.body;
-    db.query(
-      sql,
-      [
-        provider_tx_id || null,
-        payer_account || null,
-        payer_name || null,
-        transaction_ref,
-      ],
-      (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (result.affectedRows === 0) {
-          return res.status(409).json({
-            error:
-              "Không cập nhật được: không tìm thấy transaction pending hoặc đã được xác nhận trước đó",
-          });
-        }
-        return res.json({
-          message: "Giao dịch đánh dấu failed/ignored (đã ghi provider info)",
-        });
-      }
-    );
+
+    if (status === "success") {
+      payment.state = 1;
+      payment.provider_tx_id = provider_tx_id || payment.provider_tx_id;
+      payment.payer_account = payer_account || payment.payer_account;
+      payment.payer_name = payer_name || payment.payer_name;
+      payment.verification_method = "webhook";
+      payment.verified_at = new Date().toISOString();
+      payment.updated_at = new Date().toISOString();
+
+      await kv.set(key, payment);
+      return res.json({
+        message: "Cập nhật trạng thái giao dịch thành công",
+      });
+    } else {
+      payment.provider_tx_id = provider_tx_id || payment.provider_tx_id;
+      payment.payer_account = payer_account || payment.payer_account;
+      payment.payer_name = payer_name || payment.payer_name;
+      payment.verification_method = "webhook";
+      payment.updated_at = new Date().toISOString();
+
+      await kv.set(key, payment);
+      return res.json({
+        message: "Giao dịch đánh dấu failed/ignored (đã ghi provider info)",
+      });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// -------- US-009: Payment status (by resident) --------
-app.get("/payment-status", (req, res) => {
+// GET /payment-status?resident_id=...
+app.get("/payment-status", async (req, res) => {
   const { resident_id } = req.query;
-  if (!resident_id) return res.status(400).json({ error: "Thiếu resident_id" });
+  if (!resident_id)
+    return res.status(400).json({ error: "Thiếu resident_id" });
 
-  const sql = `SELECT * FROM payments WHERE resident_id = ? ORDER BY created_at DESC`;
-  db.query(sql, [resident_id], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    // map state (0/1) to readable
-    const mapped = results.map((r) => ({
-      ...r,
-      is_paid: r.state === 1,
-      status_text: r.state === 1 ? "Đã thanh toán" : "Chưa thanh toán",
-    }));
+  try {
+    const ids = await kv.zrange(
+      `payments:resident:${resident_id}`,
+      0,
+      -1,
+      { rev: true }
+    );
+
+    const payments = await Promise.all(
+      ids.map((id) => kv.get(paymentKey(id)))
+    );
+
+    const mapped = payments.filter(Boolean).map(decoratePayment);
     res.json(mapped);
-  });
-});
-
-// -------- Notifications (basic) --------
-
-// GET all notifications (with optional join to owner's name if exists)
-app.get("/notifications", (req, res) => {
-  const sql = `
-    SELECT n.*, r.full_name AS owner_name
-    FROM notifications n
-    LEFT JOIN user r
-      ON n.apartment_id = r.apartment_id
-      AND r.residency_status = 'chủ hộ'
-    ORDER BY n.notification_date DESC
-  `;
-  db.query(sql, (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(results);
-  });
-});
-
-// POST create notification
-app.post("/notifications", (req, res) => {
-  const { apartment_id, content } = req.body || {};
-  if (!apartment_id || !content) {
-    return res.status(400).json({ error: "Thiếu apartment_id hoặc content" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  const sql = `INSERT INTO notifications (apartment_id, content) VALUES (?, ?)`;
-  db.query(sql, [apartment_id, content], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res
-      .status(201)
-      .json({ message: "Thông báo được tạo", id: result.insertId });
-  });
 });
-
-// PATCH mark notification as sent
-app.patch("/notifications/:id/send", (req, res) => {
-  const { id } = req.params;
-  const sql = `UPDATE notifications SET sent_date = NOW() WHERE id = ?`;
-  db.query(sql, [id], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (result.affectedRows === 0)
-      return res.status(404).json({ error: "Notification not found" });
-    res.json({ message: "Notification marked as sent" });
-  });
-});
-
-// DELETE notification
-app.delete("/notifications/:id", (req, res) => {
-  const { id } = req.params;
-  db.query("DELETE FROM notifications WHERE id = ?", [id], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (result.affectedRows === 0)
-      return res.status(404).json({ error: "Notification not found" });
-    res.json({ message: "Notification deleted" });
-  });
-});
-
-// DELETE user (soft delete) - chỉ đặt state = 'inactive'
-app.delete("/residents/:id", (req, res) => {
-  const { id } = req.params;
-  if (!id) return res.status(400).json({ error: "Thiếu id" });
-
-  // 1) Kiểm tra resident có tồn tại không
-  db.query("SELECT id, state FROM user WHERE id = ?", [id], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!rows || rows.length === 0) {
-      return res.status(404).json({ error: "Không tìm thấy cư dân" });
-    }
-
-    // Nếu đã inactive rồi thì trả về thông báo tương ứng
-    const currentState = rows[0].state;
-    if (currentState && String(currentState).toLowerCase() === "inactive") {
-      return res.json({
-        message: "Resident đã ở trạng thái inactive (đã xóa mềm trước đó)",
-      });
-    }
-
-    // 2) Thực hiện soft delete: set state = 'inactive'
-    const sql = `UPDATE user SET state = 'inactive' WHERE id = ?`;
-    db.query(sql, [id], (err2, result) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      if (result.affectedRows === 0)
-        return res.status(404).json({ error: "Không tìm thấy cư dân" });
-      return res.json({
-        message: "Resident soft-deleted (state set to inactive)",
-      });
-    });
-  });
-});
-// -------- Payments listing & transaction endpoints --------
 
 // GET all payments (with user name)
-app.get("/payments", (req, res) => {
-  const sql = `
-    SELECT p.*, r.full_name AS resident_name, r.apartment_id
-    FROM payments p
-    LEFT JOIN user r ON p.resident_id = r.id
-    ORDER BY p.created_at DESC
-  `;
-  db.query(sql, (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    // convert state 0/1 into readable
-    const mapped = results.map((p) => ({
-      ...p,
-      is_paid: p.state === 1,
-      status_text: p.state === 1 ? "Đã thanh toán" : "Chưa thanh toán",
-    }));
+app.get("/payments", async (req, res) => {
+  try {
+    const ids = await kv.zrange("payments:all", 0, -1, { rev: true });
+    const payments = await Promise.all(
+      ids.map((id) => kv.get(paymentKey(id)))
+    );
+
+    const mapped = [];
+    for (const p of payments) {
+      if (!p) continue;
+      const r = await kv.get(residentKey(p.resident_id));
+      const merged = decoratePayment({
+        ...p,
+        resident_name: r?.full_name || null,
+        apartment_id: r?.apartment_id || null,
+      });
+      mapped.push(merged);
+    }
     res.json(mapped);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// GET payments by resident_id (same as /payment-status but paginated/limited optionally)
-app.get("/payments/by-resident/:resident_id", (req, res) => {
+// GET payments by resident_id
+app.get("/payments/by-resident/:resident_id", async (req, res) => {
   const { resident_id } = req.params;
-  const sql = `
-    SELECT p.*, r.full_name AS resident_name, r.apartment_id
-    FROM payments p
-    LEFT JOIN user r ON p.resident_id = r.id
-    WHERE p.resident_id = ?
-    ORDER BY p.created_at DESC
-  `;
-  db.query(sql, [resident_id], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    const mapped = results.map((p) => ({
-      ...p,
-      is_paid: p.state === 1,
-      status_text: p.state === 1 ? "Đã thanh toán" : "Chưa thanh toán",
-    }));
+  try {
+    const ids = await kv.zrange(
+      `payments:resident:${resident_id}`,
+      0,
+      -1,
+      { rev: true }
+    );
+    const payments = await Promise.all(
+      ids.map((id) => kv.get(paymentKey(id)))
+    );
+    const mapped = [];
+    for (const p of payments) {
+      if (!p) continue;
+      const r = await kv.get(residentKey(p.resident_id));
+      const merged = decoratePayment({
+        ...p,
+        resident_name: r?.full_name || null,
+        apartment_id: r?.apartment_id || null,
+      });
+      mapped.push(merged);
+    }
     res.json(mapped);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET one payment by id
-app.get("/payments/:id", (req, res) => {
+app.get("/payments/:id", async (req, res) => {
   const { id } = req.params;
-  const sql = `
-    SELECT p.*, r.full_name AS resident_name, r.apartment_id
-    FROM payments p
-    LEFT JOIN user r ON p.resident_id = r.id
-    WHERE p.id = ?
-    LIMIT 1
-  `;
-  db.query(sql, [id], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!results || results.length === 0)
-      return res.status(404).json({ error: "Payment not found" });
-    const p = results[0];
-    p.is_paid = p.state === 1;
-    p.status_text = p.state === 1 ? "Đã thanh toán" : "Chưa thanh toán";
-    res.json(p);
-  });
+  try {
+    const p = await kv.get(paymentKey(id));
+    if (!p) return res.status(404).json({ error: "Payment not found" });
+    const r = await kv.get(residentKey(p.resident_id));
+    const merged = decoratePayment({
+      ...p,
+      resident_name: r?.full_name || null,
+      apartment_id: r?.apartment_id || null,
+    });
+    res.json(merged);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // PATCH: cập nhật trạng thái thanh toán (state) cho payment
-
-// app.patch("/payments/:id", (req, res) => {
-//   const { id } = req.params;
-//   const { state } = req.body;
-//   if (typeof state !== "number" || (state !== 0 && state !== 1)) {
-//     return res
-//       .status(400)
-//       .json({ error: "Giá trị state không hợp lệ (chỉ nhận 0 hoặc 1)" });
-//   }
-//   if (state === 1) {
-//     // Nếu chuyển sang success, cập nhật cả state và payment_date bằng ngày hiện tại GMT+7
-//     const vnDate = dayjs().tz("Asia/Ho_Chi_Minh").format("YYYY-MM-DD");
-//     const sql = `
-//       UPDATE payments
-//       SET state = 1, payment_date = ?
-//       WHERE id = ?
-//     `;
-//     db.query(sql, [vnDate, id], (err, result) => {
-//       if (err) return res.status(500).json({ error: err.message });
-//       if (result.affectedRows === 0)
-//         return res
-//           .status(404)
-//           .json({ error: "Không tìm thấy giao dịch để cập nhật" });
-//       res.json({
-//         message: "Cập nhật trạng thái và ngày thanh toán thành công",
-//       });
-//     });
-//   } else {
-//     // Nếu là 0, cập nhật state về 0 và xóa ngày thanh toán
-//     const sql = `
-//       UPDATE payments
-//       SET state = 0, payment_date = NULL
-//       WHERE id = ?
-//     `;
-//     db.query(sql, [id], (err, result) => {
-//       if (err) return res.status(500).json({ error: err.message });
-//       if (result.affectedRows === 0)
-//         return res
-//           .status(404)
-//           .json({ error: "Không tìm thấy giao dịch để cập nhật" });
-//       res.json({
-//         message: "Cập nhật trạng thái về chưa thanh toán thành công",
-//       });
-//     });
-//   }
-// });
-
-app.patch("/payments/:id", (req, res) => {
+app.patch("/payments/:id", async (req, res) => {
   const { id } = req.params;
   const {
     state, // Dùng cho việc đổi trạng thái (0 hoặc 1)
     feetype, // Dùng cho AccountPayment
     amount, // Dùng cho AccountPayment
     payment_date, // Dùng cho AccountPayment
-  } = req.body;
+  } = req.body || {};
 
-  const updateFields = [];
-  const updateParams = [];
+  try {
+    const p = await kv.get(paymentKey(id));
+    if (!p) return res.status(404).json({ error: "Không tìm thấy giao dịch" });
 
-  // Use case 1: Cập nhật STATE (từ 0 -> 1 hoặc 1 -> 0)
-  if (state !== undefined && (state === 0 || state === 1)) {
-    updateFields.push("state = ?");
-    updateParams.push(state);
+    // Use case 1: Cập nhật STATE (từ 0 -> 1 hoặc 1 -> 0)
+    if (state !== undefined && (state === 0 || state === 1)) {
+      p.state = state;
 
-    if (state === 1) {
-      // Nếu chuyển sang 1 (Đã thanh toán), tự động set ngày
-      const vnDate = dayjs().tz("Asia/Ho_Chi_Minh").format("YYYY-MM-DD");
-      // Chỉ set ngày nếu nó đang là NULL
-      updateFields.push("payment_date = COALESCE(payment_date, ?)");
-      updateParams.push(vnDate);
-    } else {
-      // Nếu chuyển về 0 (Chưa thanh toán), xóa ngày
-      updateFields.push("payment_date = NULL");
+      if (state === 1) {
+        const vnDate = dayjs()
+          .tz("Asia/Ho_Chi_Minh")
+          .format("YYYY-MM-DD");
+        if (!p.payment_date) {
+          p.payment_date = vnDate;
+        }
+      } else {
+        p.payment_date = null;
+      }
     }
-  }
 
-  // Use case 2: Cập nhật chi tiết (từ AccountPayment.jsx)
-  // (Chúng ta có thể kiểm tra 'feetype' để biết đây là use case 2)
-  if (feetype !== undefined) {
-    updateFields.push("feetype = ?");
-    updateParams.push(feetype);
-  }
-  if (amount !== undefined) {
-    updateFields.push("amount = ?");
-    updateParams.push(amount);
-  }
-  if (payment_date !== undefined) {
-    // Cho phép FE ghi đè payment_date (kể cả khi là null)
-    updateFields.push("payment_date = ?");
-    updateParams.push(payment_date || null);
-  }
-  // apartment_id KHÔNG được cập nhật ở đây vì nó không thuộc bảng payments.
+    // Use case 2: Cập nhật chi tiết
+    if (feetype !== undefined) p.feetype = feetype;
+    if (amount !== undefined) p.amount = amount;
+    if (payment_date !== undefined) p.payment_date = payment_date || null;
 
-  if (updateFields.length === 0) {
-    return res
-      .status(400)
-      .json({ error: "Không có trường hợp lệ nào để cập nhật." });
-  }
+    p.updated_at = new Date().toISOString();
 
-  // Thêm ID vào cuối mảng params
-  updateParams.push(id);
-
-  const sql = `UPDATE payments SET ${updateFields.join(", ")} WHERE id = ?`;
-
-  db.query(sql, updateParams, (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (result.affectedRows === 0)
-      return res.status(404).json({ error: "Không tìm thấy giao dịch" });
+    await kv.set(paymentKey(id), p);
     res.json({ message: "Cập nhật giao dịch thành công" });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// -------- PUT /notifications/:id — chỉnh sửa thông báo --------
-app.put("/notifications/:id", (req, res) => {
+// DELETE payment (xóa hẳn giao dịch)
+app.delete("/payments/:id", async (req, res) => {
+  const { id } = req.params;
+
+  if (!id) return res.status(400).json({ error: "Thiếu id" });
+
+  try {
+    const p = await kv.get(paymentKey(id));
+    if (!p) {
+      return res
+        .status(404)
+        .json({ error: "Không tìm thấy giao dịch để xóa" });
+    }
+
+    await kv.del(paymentKey(id));
+    await kv.zrem("payments:all", String(id));
+    await kv.zrem(`payments:resident:${p.resident_id}`, String(id));
+
+    if (p.transaction_ref) {
+      await kv.del(`payment:txref:${p.transaction_ref}`);
+    }
+
+    res.json({ message: "Đã xóa giao dịch thành công" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================
+// ================== NOTIFICATIONS ===================
+// ====================================================
+
+// GET all notifications (with owner_name)
+app.get("/notifications", async (req, res) => {
+  try {
+    const ids = await kv.zrange("notifications:all", 0, -1, { rev: true });
+    const notis = await Promise.all(
+      ids.map((id) => kv.get(notificationKey(id)))
+    );
+
+    const results = [];
+    for (const n of notis) {
+      if (!n) continue;
+      let owner_name = null;
+      if (n.apartment_id) {
+        const ownerId = await kv.get(
+          `resident:ownerByApartment:${n.apartment_id}`
+        );
+        if (ownerId) {
+          const owner = await kv.get(residentKey(ownerId));
+          owner_name = owner?.full_name || null;
+        }
+      }
+      results.push({ ...n, owner_name });
+    }
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST create notification
+app.post("/notifications", async (req, res) => {
+  const { apartment_id, content } = req.body || {};
+  if (!apartment_id || !content) {
+    return res.status(400).json({ error: "Thiếu apartment_id hoặc content" });
+  }
+  try {
+    const id = await nextId("seq:notification");
+    const nowIso = new Date().toISOString();
+
+    const noti = {
+      id,
+      apartment_id,
+      content,
+      notification_date: nowIso,
+      sent_date: null,
+    };
+
+    await kv.set(notificationKey(id), noti);
+    await kv.zadd("notifications:all", {
+      score: Date.parse(nowIso),
+      member: String(id),
+    });
+
+    res
+      .status(201)
+      .json({ message: "Thông báo được tạo", id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH mark notification as sent
+app.patch("/notifications/:id/send", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const noti = await kv.get(notificationKey(id));
+    if (!noti)
+      return res.status(404).json({ error: "Notification not found" });
+
+    noti.sent_date = new Date().toISOString();
+    await kv.set(notificationKey(id), noti);
+
+    res.json({ message: "Notification marked as sent" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /notifications/:id — chỉnh sửa thông báo
+app.put("/notifications/:id", async (req, res) => {
   const { id } = req.params;
   const { apartment_id, content, notification_date, sent_date } =
     req.body || {};
 
   if (!id) return res.status(400).json({ error: "Thiếu id thông báo" });
 
-  // 1️⃣ Chuẩn bị các trường cần cập nhật (chỉ bao gồm trường có giá trị không rỗng)
-  const updateFields = [];
-  const updateParams = [];
-
-  // apartment_id
-  if (apartment_id !== undefined && apartment_id.trim() !== "") {
-    updateFields.push("apartment_id = ?");
-    updateParams.push(apartment_id.trim());
-  } else if (apartment_id === "") {
-    // Báo lỗi nếu trường NOT NULL bị xóa trắng
-    return res
-      .status(400)
-      .json({ error: "Trường Người nhận (apartment_id) không được để trống." });
-  }
-
-  // content
-  if (content !== undefined && content.trim() !== "") {
-    updateFields.push("content = ?");
-    updateParams.push(content.trim());
-  } else if (content === "") {
-    // Báo lỗi nếu trường NOT NULL bị xóa trắng
-    return res
-      .status(400)
-      .json({ error: "Trường Nội dung không được để trống." });
-  }
-
-  // Các trường tùy chọn khác (notification_date, sent_date)
-  if (notification_date !== undefined) {
-    updateFields.push("notification_date = ?");
-    updateParams.push(notification_date || null);
-  }
-  if (sent_date !== undefined) {
-    updateFields.push("sent_date = ?");
-    updateParams.push(sent_date); // Giá trị này có thể là null nếu muốn xóa ngày gửi
-  }
-
-  // Kiểm tra nếu không có trường nào để cập nhật (không phải lỗi, nhưng là 400 hợp lý)
-  if (updateFields.length === 0) {
-    return res
-      .status(400)
-      .json({ error: "Không có trường nào hợp lệ để cập nhật." });
-  }
-
-  // Thêm ID vào cuối danh sách tham số
-  updateParams.push(id);
-
-  // 2️⃣ Cập nhật thông báo
-  const sql = `UPDATE notifications SET ${updateFields.join(
-    ", "
-  )} WHERE id = ?`;
-
-  // Bỏ qua checkSql do đã kiểm tra ở FE và sẽ kiểm tra affectedRows
-  db.query(sql, updateParams, (err2, result) => {
-    if (err2) return res.status(500).json({ error: err2.message });
-
-    if (result.affectedRows === 0) {
-      // Nếu không có dòng nào bị ảnh hưởng, có nghĩa là ID không tồn tại
+  try {
+    const noti = await kv.get(notificationKey(id));
+    if (!noti)
       return res
         .status(404)
         .json({ error: "Không tìm thấy thông báo để cập nhật" });
-    }
 
-    // Cập nhật thành công (200 OK)
-    res.json({ message: "Cập nhật thông báo thành công" });
-  });
-});
+    const update = { ...noti };
 
-// -------- DELETE payment (xóa hẳn giao dịch) --------
-app.delete("/payments/:id", (req, res) => {
-  const { id } = req.params;
-
-  if (!id) return res.status(400).json({ error: "Thiếu id" });
-
-  // 1️⃣ Kiểm tra giao dịch có tồn tại không
-  const checkSql = "SELECT id FROM payments WHERE id = ? LIMIT 1";
-  db.query(checkSql, [id], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!rows || rows.length === 0) {
-      return res.status(404).json({ error: "Không tìm thấy giao dịch để xóa" });
-    }
-
-    // 2️⃣ Xóa hẳn giao dịch
-    const deleteSql = "DELETE FROM payments WHERE id = ?";
-    db.query(deleteSql, [id], (err2, result) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      if (result.affectedRows === 0) {
-        return res.status(404).json({
-          error: "Không thể xóa giao dịch (có thể đã bị xóa trước đó)",
-        });
+    if (apartment_id !== undefined) {
+      if (apartment_id.trim() === "") {
+        return res
+          .status(400)
+          .json({ error: "Trường Người nhận (apartment_id) không được để trống." });
       }
-      res.json({ message: "Đã xóa giao dịch thành công" });
-    });
-  });
+      update.apartment_id = apartment_id.trim();
+    }
+
+    if (content !== undefined) {
+      if (content.trim() === "") {
+        return res
+          .status(400)
+          .json({ error: "Trường Nội dung không được để trống." });
+      }
+      update.content = content.trim();
+    }
+
+    if (notification_date !== undefined) {
+      update.notification_date = notification_date || null;
+    }
+
+    if (sent_date !== undefined) {
+      update.sent_date = sent_date || null;
+    }
+
+    await kv.set(notificationKey(id), update);
+    res.json({ message: "Cập nhật thông báo thành công" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// -------- Helper / health --------
-app.get("/health", (req, res) => res.json({ ok: true }));
+// DELETE notification
+app.delete("/notifications/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const noti = await kv.get(notificationKey(id));
+    if (!noti)
+      return res.status(404).json({ error: "Notification not found" });
 
-// Start server
-// app.listen(port, () => {
-//   // console.log(`🚀 Server chạy tại http://localhost:${port}`);
-//   console.log(port);
-// });
+    await kv.del(notificationKey(id));
+    await kv.zrem("notifications:all", String(id));
 
-// -------- API ĐĂNG NHẬP --------
-app.post("/login", (req, res) => {
-  const { username, password, role } = req.body;
+    res.json({ message: "Notification deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================
+// ====================== LOGIN =======================
+// ====================================================
+
+app.post("/login", async (req, res) => {
+  const { username, password, role } = req.body || {};
 
   if (!username || !password || !role) {
     return res
@@ -744,25 +745,38 @@ app.post("/login", (req, res) => {
       .json({ error: "Thiếu username, password hoặc role" });
   }
 
-  // Cho phép đăng nhập bằng email hoặc phone, và đúng role
-  const sql = `SELECT * FROM user WHERE (email = ? OR phone = ?) AND password = ? AND role = ? LIMIT 1`;
-
-  db.query(sql, [username, username, password, role], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-
-    if (results.length === 0) {
-      // Đăng nhập thất bại
+  try {
+    let id = await kv.get(`login:email:${username}`);
+    if (!id) {
+      id = await kv.get(`login:phone:${username}`);
+    }
+    if (!id) {
       return res
         .status(401)
         .json({ error: "Sai tài khoản, mật khẩu hoặc vai trò" });
     }
 
-    // Đăng nhập thành công
-    const user = results[0];
-    delete user.password; // Xóa password trước khi gửi về FE
+    const user = await kv.get(residentKey(id));
+    if (
+      !user ||
+      user.password !== password ||
+      user.role !== role ||
+      (user.state &&
+        String(user.state).toLowerCase() === "inactive")
+    ) {
+      return res
+        .status(401)
+        .json({ error: "Sai tài khoản, mật khẩu hoặc vai trò" });
+    }
 
-    res.json({ message: "Đăng nhập thành công", user: user });
-  });
+    const safeUser = { ...user };
+    delete safeUser.password;
+
+    res.json({ message: "Đăng nhập thành công", user: safeUser });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// ================== EXPORT CHO VERCEL ==================
 module.exports = app;

@@ -1,0 +1,48 @@
+-- lấy danh sách cư dân: get http://localhost:3000/residents
+-- tìm cư dân bằng id: get http://localhost:3000/residents/id (id cư dân)
+-- thêm cư dân : post http://localhost:3000/residents
+{
+  "first_name": "Văn",
+  "last_name": "B",
+  "phone": "0938099203",
+  "apartment_id": "Tầng 7 - Phòng 713",
+  "cccd": "077204000123",
+  "birth_date": "1999-10-30",
+  "role": "Cư dân",
+  "residency_status": "chủ hộ",
+  "email": "dovanb@gmail.com"
+}
+-- tạo giao dịch thanh toán : post http://localhost:3000/payment
+{
+  "resident_id": 1,
+  "amount": 250000,
+  "feetype": "Phí quản lý tháng 10",
+  "payment_form": "Chuyển khoản QR"
+}
+-- giả lập xác nhận thanh toán (callback): post http://localhost:3000/payment/callback
+{
+  "transaction_ref": "TRX_1698145621000",
+  "status": "success",
+  "payer_account": "1234567890",
+  "payer_name": "Đỗ Văn B",
+  "provider_tx_id": "BANKTX9999"
+}
+-- lấy danh sách giao dịch get http://localhost:3000/payments
+-- lấy danh sách giao dịch theo resident: get http://localhost:3000/payments/by-resident/id id=1,2,3,4,....(id cư dân)
+-- lấy chi tiết payment theo id: get http://localhost:3000/payments/id (id payment)
+-- theo transaction ref: get http://localhost:3000/payments/tx/TRX_163... (trx xem trong bảng)
+-- tra cứu trạng thái thanh toán: get http://localhost:3000/payment-status?resident_id=24 (24 là id cư dân)
+
+
+-- tạo thông báo mới : post http://localhost:3000/notifications
+
+{
+  "apartment_id": "Tầng 7 - Phòng 713",
+  "content": "Ban quản lý thông báo: căn hộ Tầng 7 - Phòng 713 cần cập nhật thông tin cư trú trước ngày 30/10."
+}
+
+-- đánh dấu thông báo đã gửi: patch http://localhost:3000/notifications/1/send (1 là id thông báo)
+-- xem danh sách thông báo: get http://localhost:3000/notifications
+-- xoá cư dân: DELETE http://localhost:3000/residents/id id=1,2,3,.....
+-- xoá thông báo: delete http://localhost:3000/notifications/id id=1,2,3,........
+

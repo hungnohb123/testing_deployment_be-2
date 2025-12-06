@@ -1,0 +1,26 @@
+// Cư dân
+// lấy danh sách cư dân GET http://localhost:3000/residents -- Trả mảng JSON các cư dân
+// Thêm cư dân mới POST JSON http://localhost:3000/residents
+//{ "first_name":"Nguyen", "last_name":"Van A", "phone":"0901234567", "apartment_id":"A1-101" } bắt buộc 4 trường
+// Cập nhật cư dân http://localhost:3000/residents/:id vs residents/1 -- cập nhật thằng 1  thêm scrip như trên để update
+
+// Payment
+// Lấy danh sách phí (mock) GET http://localhost:3000/fees -- Dữ liệu tạm để hiển thị UI chọn phí
+// Tạo giao dịch thanh toán POST  POST http://localhost:3000/payment 
+//-- Body: { "resident_id": 1, "amount": 300000 } (phải có residents id mới tạo đc giao dịch)
+//callback POST http://localhost:3000/payment/callback 
+{
+  "transaction_ref": "TXN_XXXX",
+  "status": "success" -> nếu cập nhật trạng thái giao dịch thành công || failled nếu thất bại
+}
+//. US-009 — Payment status for resident GET http://localhost:3000/payment-status?resident_id=1 CÓ THỂ 2,3,...
+--xem lại các giao dịch
+
+const paymentsData: PaymentItem[] = [
+  { id: '156782', type: 'Phí sửa chữa', date: '20/12/2005', method: 'Online', status: 'Đã thanh toán' },
+  { id: '156970', type: 'Tiền điện tháng', date: '30/10/2005', method: 'Offline', status: 'Đã thanh toán' },
+  { id: '156772', type: 'Tiền nước tháng', date: 'Chưa thanh toán', method: 'Chưa thanh toán', status: 'Chưa thanh toán' },
+  { id: '156782', type: 'Phí dịch vụ', date: 'Chưa thanh toán', method: 'Chưa thanh toán', status: 'Chưa thanh toán' },
+  { id: '156882', type: 'Phí dịch vụ', date: 'Chưa thanh toán', method: 'Chưa thanh toán', status: 'Chưa thanh toán' },
+  { id: '156982', type: 'Phí dịch vụ', date: 'Chưa thanh toán', method: 'Chưa thanh toán', status: 'Chưa thanh toán' },
+];
