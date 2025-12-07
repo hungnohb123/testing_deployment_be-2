@@ -415,7 +415,7 @@ app.post("/payments/callback", async (req, res) => {
 });
 
 // GET /payment-status?resident_id=...
-app.get("/payment-status", async (req, res) => {
+app.get("/payments", async (req, res) => {
   //có thể thiếu s
   const { resident_id } = req.query;
   if (!resident_id) return res.status(400).json({ error: "Thiếu resident_id" });
