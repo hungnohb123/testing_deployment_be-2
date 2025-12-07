@@ -101,11 +101,11 @@ async function updateResidentIndexes(oldUser, newUser) {
     oldIsOwner &&
     (!newIsOwner || oldUser.apartment_id !== newUser.apartment_id)
   ) {
-    await kv.del(`resident:ownerByApartment:${oldUser.apartment_id}`);
+    await kv.del(`residents:ownerByApartment:${oldUser.apartment_id}`);
   }
   if (newIsOwner) {
     await kv.set(
-      `resident:ownerByApartment:${newUser.apartment_id}`,
+      `residents:ownerByApartment:${newUser.apartment_id}`,
       newUser.id
     );
   }
@@ -158,7 +158,7 @@ app.post("/residents", async (req, res) => {
       });
     }
 
-    const id = await nextId("seq:resident");
+    const id = await nextId("seq:resident"); // có thể thiếu s
     const full_name = `${first_name.trim()} ${last_name.trim()}`;
 
     const user = {
@@ -301,7 +301,7 @@ app.get("/fees", (req, res) => {
 });
 
 // POST create payment (generate transaction_ref)
-app.post("/payment", async (req, res) => {
+app.post("/payments", async (req, res) => {
   try {
     const { resident_id, amount, feetype, payment_form } = req.body || {};
     if (!resident_id || !amount) {
@@ -335,11 +335,11 @@ app.post("/payment", async (req, res) => {
       score: Date.parse(nowIso),
       member: String(id),
     });
-    await kv.zadd(`payments:resident:${resident_id}`, {
+    await kv.zadd(`payments:residents:${resident_id}`, {
       score: Date.parse(nowIso),
       member: String(id),
     });
-    await kv.set(`payment:txref:${transaction_ref}`, id);
+    await kv.set(`payments:txref:${transaction_ref}`, id);
 
     res.status(201).json({
       message: "Tạo giao dịch thành công",
@@ -352,7 +352,7 @@ app.post("/payment", async (req, res) => {
 });
 
 // POST payment callback (webhook mock)
-app.post("/payment/callback", async (req, res) => {
+app.post("/payments/callback", async (req, res) => {
   try {
     console.log("callback body:", req.body);
 
@@ -367,7 +367,7 @@ app.post("/payment/callback", async (req, res) => {
         .json({ error: "transaction_ref hoặc status không hợp lệ" });
     }
 
-    const paymentId = await kv.get(`payment:txref:${transaction_ref}`);
+    const paymentId = await kv.get(`payments:txref:${transaction_ref}`);
     if (!paymentId) {
       return res.status(409).json({
         error: "Không tìm thấy transaction pending hoặc đã được xác nhận",
@@ -416,11 +416,12 @@ app.post("/payment/callback", async (req, res) => {
 
 // GET /payment-status?resident_id=...
 app.get("/payment-status", async (req, res) => {
+  //có thể thiếu s
   const { resident_id } = req.query;
   if (!resident_id) return res.status(400).json({ error: "Thiếu resident_id" });
 
   try {
-    const ids = await kv.zrange(`payments:resident:${resident_id}`, 0, -1, {
+    const ids = await kv.zrange(`payments:residents:${resident_id}`, 0, -1, {
       rev: true,
     });
 
@@ -558,7 +559,7 @@ app.delete("/payments/:id", async (req, res) => {
     await kv.zrem(`payments:resident:${p.resident_id}`, String(id));
 
     if (p.transaction_ref) {
-      await kv.del(`payment:txref:${p.transaction_ref}`);
+      await kv.del(`payments:txref:${p.transaction_ref}`);
     }
 
     res.json({ message: "Đã xóa giao dịch thành công" });
@@ -585,7 +586,7 @@ app.get("/notifications", async (req, res) => {
       let owner_name = null;
       if (n.apartment_id) {
         const ownerId = await kv.get(
-          `resident:ownerByApartment:${n.apartment_id}`
+          `residents:ownerByApartment:${n.apartment_id}`
         );
         if (ownerId) {
           const owner = await kv.get(residentKey(ownerId));
@@ -607,7 +608,7 @@ app.post("/notifications", async (req, res) => {
     return res.status(400).json({ error: "Thiếu apartment_id hoặc content" });
   }
   try {
-    const id = await nextId("seq:notification");
+    const id = await nextId("seq:notification"); // có thể thiếu s
     const nowIso = new Date().toISOString();
 
     const noti = {
@@ -665,11 +666,9 @@ app.put("/notifications/:id", async (req, res) => {
 
     if (apartment_id !== undefined) {
       if (apartment_id.trim() === "") {
-        return res
-          .status(400)
-          .json({
-            error: "Trường Người nhận (apartment_id) không được để trống.",
-          });
+        return res.status(400).json({
+          error: "Trường Người nhận (apartment_id) không được để trống.",
+        });
       }
       update.apartment_id = apartment_id.trim();
     }
