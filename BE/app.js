@@ -415,7 +415,7 @@ app.post("/payments/callback", async (req, res) => {
 });
 
 // GET /payment-status?resident_id=...
-app.get("/payments", async (req, res) => {
+app.get("/payment-status", async (req, res) => {
   //có thể thiếu s
   const { resident_id } = req.query;
   if (!resident_id) return res.status(400).json({ error: "Thiếu resident_id" });
@@ -459,7 +459,7 @@ app.get("/payments", async (req, res) => {
 
 // GET payments by resident_id
 app.get("/payments/by-resident/:resident_id", async (req, res) => {
-  const { resident_id } = req.params;
+  const { resident_id } = req.params; // không hiện thông báo
   try {
     const ids = await kv.zrange(`payments:resident:${resident_id}`, 0, -1, {
       rev: true,
