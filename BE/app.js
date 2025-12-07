@@ -308,7 +308,7 @@ app.post("/payments", async (req, res) => {
       return res.status(400).json({ error: "Thiếu resident_id hoặc amount" });
     }
 
-    const id = await nextId("seq:payment");
+    const id = await nextId("seq:payments");
     const transaction_ref = `TRX_${Date.now()}`;
     const nowIso = new Date().toISOString();
 
