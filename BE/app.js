@@ -47,15 +47,15 @@ async function nextId(seqKey) {
 }
 
 function residentKey(id) {
-  return `resident:${id}`;
+  return `residents:${id}`;
 }
 
 function paymentKey(id) {
-  return `payment:${id}`;
+  return `payments:${id}`;
 }
 
 function notificationKey(id) {
-  return `notification:${id}`;
+  return `notifications:${id}`;
 }
 
 // ================== ROOT & HEALTH ==================
