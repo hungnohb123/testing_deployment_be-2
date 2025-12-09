@@ -469,7 +469,7 @@ app.get("/payments", async (req, res) => {
 app.get("/payments/by-resident/:resident_id", async (req, res) => {
   const { resident_id } = req.params;
   try {
-    const ids = await kv.zrange(`payments:residents:${resident_id}`, 0, -1, {
+    const ids = await kv.zrange(`payments:resident:${resident_id}`, 0, -1, {
       rev: true,
     });
     const payments = await Promise.all(ids.map((id) => kv.get(paymentKey(id))));
