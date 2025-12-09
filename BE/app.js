@@ -47,24 +47,24 @@ async function nextId(seqKey) {
 }
 
 function residentKey(id) {
-  return `resident:${id}`;
+  return `residents:${id}`;
 }
 
 function paymentKey(id) {
-  return `payment:${id}`;
+  return `payments:${id}`;
 }
 
 function notificationKey(id) {
-  return `notification:${id}`;
+  return `notifications:${id}`;
 }
 
 // *** THÊM MỚI: helper cho services ***
 function serviceKey(id) {
-  return `service:${id}`;
+  return `services:${id}`;
 }
 // *** THÊM MỚI: helper cho forms ***
 function formKey(id) {
-  return `form:${id}`;
+  return `forms:${id}`;
 }
 
 // ================== ROOT & HEALTH ==================
@@ -106,12 +106,15 @@ async function updateResidentIndexes(oldUser, newUser) {
     newUser.residency_status &&
     String(newUser.residency_status).toLowerCase() === "chủ hộ";
 
-  if (oldIsOwner && (!newIsOwner || oldUser.apartment_id !== newUser.apartment_id)) {
-    await kv.del(`resident:ownerByApartment:${oldUser.apartment_id}`);
+  if (
+    oldIsOwner &&
+    (!newIsOwner || oldUser.apartment_id !== newUser.apartment_id)
+  ) {
+    await kv.del(`residents:ownerByApartment:${oldUser.apartment_id}`);
   }
   if (newIsOwner) {
     await kv.set(
-      `resident:ownerByApartment:${newUser.apartment_id}`,
+      `residents:ownerByApartment:${newUser.apartment_id}`,
       newUser.id
     );
   }
@@ -187,9 +190,7 @@ app.post("/residents", async (req, res) => {
     await kv.zadd("residents:all", { score: id, member: String(id) });
     await updateResidentIndexes(null, user);
 
-    res
-      .status(201)
-      .json({ message: "Thêm người dùng thành công", id: id });
+    res.status(201).json({ message: "Thêm người dùng thành công", id: id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -309,7 +310,7 @@ app.get("/fees", (req, res) => {
 });
 
 // POST create payment (generate transaction_ref)
-app.post("/payment", async (req, res) => {
+app.post("/payments", async (req, res) => {
   try {
     const { resident_id, amount, feetype, payment_form } = req.body || {};
     if (!resident_id || !amount) {
@@ -347,7 +348,7 @@ app.post("/payment", async (req, res) => {
       score: Date.parse(nowIso),
       member: String(id),
     });
-    await kv.set(`payment:txref:${transaction_ref}`, id);
+    await kv.set(`payments:txref:${transaction_ref}`, id);
 
     res.status(201).json({
       message: "Tạo giao dịch thành công",
@@ -360,7 +361,7 @@ app.post("/payment", async (req, res) => {
 });
 
 // POST payment callback (webhook mock)
-app.post("/payment/callback", async (req, res) => {
+app.post("/payments/callback", async (req, res) => {
   try {
     console.log("callback body:", req.body);
 
@@ -375,7 +376,7 @@ app.post("/payment/callback", async (req, res) => {
         .json({ error: "transaction_ref hoặc status không hợp lệ" });
     }
 
-    const paymentId = await kv.get(`payment:txref:${transaction_ref}`);
+    const paymentId = await kv.get(`payments:txref:${transaction_ref}`);
     if (!paymentId) {
       return res.status(409).json({
         error: "Không tìm thấy transaction pending hoặc đã được xác nhận",
@@ -425,20 +426,14 @@ app.post("/payment/callback", async (req, res) => {
 // GET /payment-status?resident_id=...
 app.get("/payment-status", async (req, res) => {
   const { resident_id } = req.query;
-  if (!resident_id)
-    return res.status(400).json({ error: "Thiếu resident_id" });
+  if (!resident_id) return res.status(400).json({ error: "Thiếu resident_id" });
 
   try {
-    const ids = await kv.zrange(
-      `payments:resident:${resident_id}`,
-      0,
-      -1,
-      { rev: true }
-    );
+    const ids = await kv.zrange(`payments:residents:${resident_id}`, 0, -1, {
+      rev: true,
+    });
 
-    const payments = await Promise.all(
-      ids.map((id) => kv.get(paymentKey(id)))
-    );
+    const payments = await Promise.all(ids.map((id) => kv.get(paymentKey(id))));
 
     const mapped = payments.filter(Boolean).map(decoratePayment);
     res.json(mapped);
@@ -451,9 +446,7 @@ app.get("/payment-status", async (req, res) => {
 app.get("/payments", async (req, res) => {
   try {
     const ids = await kv.zrange("payments:all", 0, -1, { rev: true });
-    const payments = await Promise.all(
-      ids.map((id) => kv.get(paymentKey(id)))
-    );
+    const payments = await Promise.all(ids.map((id) => kv.get(paymentKey(id))));
 
     const mapped = [];
     for (const p of payments) {
@@ -476,15 +469,10 @@ app.get("/payments", async (req, res) => {
 app.get("/payments/by-resident/:resident_id", async (req, res) => {
   const { resident_id } = req.params;
   try {
-    const ids = await kv.zrange(
-      `payments:resident:${resident_id}`,
-      0,
-      -1,
-      { rev: true }
-    );
-    const payments = await Promise.all(
-      ids.map((id) => kv.get(paymentKey(id)))
-    );
+    const ids = await kv.zrange(`payments:residents:${resident_id}`, 0, -1, {
+      rev: true,
+    });
+    const payments = await Promise.all(ids.map((id) => kv.get(paymentKey(id))));
     const mapped = [];
     for (const p of payments) {
       if (!p) continue;
@@ -539,9 +527,7 @@ app.patch("/payments/:id", async (req, res) => {
       p.state = state;
 
       if (state === 1) {
-        const vnDate = dayjs()
-          .tz("Asia/Ho_Chi_Minh")
-          .format("YYYY-MM-DD");
+        const vnDate = dayjs().tz("Asia/Ho_Chi_Minh").format("YYYY-MM-DD");
         if (!p.payment_date) {
           p.payment_date = vnDate;
         }
@@ -573,17 +559,15 @@ app.delete("/payments/:id", async (req, res) => {
   try {
     const p = await kv.get(paymentKey(id));
     if (!p) {
-      return res
-        .status(404)
-        .json({ error: "Không tìm thấy giao dịch để xóa" });
+      return res.status(404).json({ error: "Không tìm thấy giao dịch để xóa" });
     }
 
     await kv.del(paymentKey(id));
     await kv.zrem("payments:all", String(id));
-    await kv.zrem(`payments:resident:${p.resident_id}`, String(id));
+    await kv.zrem(`payments:residents:${p.resident_id}`, String(id));
 
     if (p.transaction_ref) {
-      await kv.del(`payment:txref:${p.transaction_ref}`);
+      await kv.del(`payments:txref:${p.transaction_ref}`);
     }
 
     res.json({ message: "Đã xóa giao dịch thành công" });
@@ -610,7 +594,7 @@ app.get("/notifications", async (req, res) => {
       let owner_name = null;
       if (n.apartment_id) {
         const ownerId = await kv.get(
-          `resident:ownerByApartment:${n.apartment_id}`
+          `residents:ownerByApartment:${n.apartment_id}`
         );
         if (ownerId) {
           const owner = await kv.get(residentKey(ownerId));
@@ -649,9 +633,7 @@ app.post("/notifications", async (req, res) => {
       member: String(id),
     });
 
-    res
-      .status(201)
-      .json({ message: "Thông báo được tạo", id });
+    res.status(201).json({ message: "Thông báo được tạo", id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -662,8 +644,7 @@ app.patch("/notifications/:id/send", async (req, res) => {
   const { id } = req.params;
   try {
     const noti = await kv.get(notificationKey(id));
-    if (!noti)
-      return res.status(404).json({ error: "Notification not found" });
+    if (!noti) return res.status(404).json({ error: "Notification not found" });
 
     noti.sent_date = new Date().toISOString();
     await kv.set(notificationKey(id), noti);
@@ -693,9 +674,9 @@ app.put("/notifications/:id", async (req, res) => {
 
     if (apartment_id !== undefined) {
       if (apartment_id.trim() === "") {
-        return res
-          .status(400)
-          .json({ error: "Trường Người nhận (apartment_id) không được để trống." });
+        return res.status(400).json({
+          error: "Trường Người nhận (apartment_id) không được để trống.",
+        });
       }
       update.apartment_id = apartment_id.trim();
     }
@@ -729,8 +710,7 @@ app.delete("/notifications/:id", async (req, res) => {
   const { id } = req.params;
   try {
     const noti = await kv.get(notificationKey(id));
-    if (!noti)
-      return res.status(404).json({ error: "Notification not found" });
+    if (!noti) return res.status(404).json({ error: "Notification not found" });
 
     await kv.del(notificationKey(id));
     await kv.zrem("notifications:all", String(id));
@@ -770,8 +750,7 @@ app.post("/login", async (req, res) => {
       !user ||
       user.password !== password ||
       user.role !== role ||
-      (user.state &&
-        String(user.state).toLowerCase() === "inactive")
+      (user.state && String(user.state).toLowerCase() === "inactive")
     ) {
       return res
         .status(401)
@@ -792,11 +771,7 @@ app.post("/login", async (req, res) => {
 // ====================================================
 
 // Enum theo đúng bảng services trong MySQL (design)
-const SERVICE_TYPES = [
-  "Dịch vụ trung cư",
-  "Khiếu nại",
-  "Khai báo tạm trú",
-];
+const SERVICE_TYPES = ["Dịch vụ trung cư", "Khiếu nại", "Khai báo tạm trú"];
 
 const CONTENT_BY_TYPE = {
   "Dịch vụ trung cư": [
@@ -948,12 +923,9 @@ app.get("/services", async (req, res) => {
 app.get("/services/by-apartment/:apartment_id", async (req, res) => {
   const { apartment_id } = req.params;
   try {
-    const ids = await kv.zrange(
-      `services:apartment:${apartment_id}`,
-      0,
-      -1,
-      { rev: true }
-    );
+    const ids = await kv.zrange(`services:apartment:${apartment_id}`, 0, -1, {
+      rev: true,
+    });
     const services = await Promise.all(ids.map((id) => kv.get(serviceKey(id))));
     res.json(services.filter(Boolean));
   } catch (err) {
@@ -1000,8 +972,7 @@ app.patch("/services/:id", async (req, res) => {
     if (service_type !== undefined || content !== undefined) {
       const newServiceType =
         service_type !== undefined ? service_type : service.service_type;
-      const newContent =
-        content !== undefined ? content : service.content;
+      const newContent = content !== undefined ? content : service.content;
 
       if (!SERVICE_TYPES.includes(newServiceType)) {
         return res.status(400).json({
@@ -1209,12 +1180,9 @@ app.get("/forms/:id", async (req, res) => {
 app.get("/forms/by-apartment/:apartment_id", async (req, res) => {
   const { apartment_id } = req.params;
   try {
-    const ids = await kv.zrange(
-      `forms:apartment:${apartment_id}`,
-      0,
-      -1,
-      { rev: true }
-    );
+    const ids = await kv.zrange(`forms:apartment:${apartment_id}`, 0, -1, {
+      rev: true,
+    });
     const forms = await Promise.all(ids.map((id) => kv.get(formKey(id))));
     res.json(forms.filter(Boolean));
   } catch (err) {
@@ -1227,12 +1195,9 @@ app.get("/forms/by-apartment/:apartment_id", async (req, res) => {
 app.get("/forms/by-service/:service_id", async (req, res) => {
   const { service_id } = req.params;
   try {
-    const ids = await kv.zrange(
-      `forms:service:${service_id}`,
-      0,
-      -1,
-      { rev: true }
-    );
+    const ids = await kv.zrange(`forms:service:${service_id}`, 0, -1, {
+      rev: true,
+    });
     const forms = await Promise.all(ids.map((id) => kv.get(formKey(id))));
     res.json(forms.filter(Boolean));
   } catch (err) {
@@ -1329,11 +1294,6 @@ app.delete("/forms/:id", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-
-
-
-
 
 // ================== EXPORT CHO VERCEL ==================
 module.exports = app;
