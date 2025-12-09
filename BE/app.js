@@ -62,6 +62,10 @@ function notificationKey(id) {
 function serviceKey(id) {
   return `service:${id}`;
 }
+// *** THÊM MỚI: helper cho forms ***
+function formKey(id) {
+  return `form:${id}`;
+}
 
 // ================== ROOT & HEALTH ==================
 app.get("/", (req, res) => {
@@ -787,30 +791,58 @@ app.post("/login", async (req, res) => {
 // ==================== SERVICES ======================
 // ====================================================
 
-// Cấu hình loại dịch vụ & ràng buộc content / bên xử lý
-const SERVICE_CONFIG = {
-  "Dịch vụ trung cư": {
-    allowedContents: [
-      "Làm thẻ xe",
-      "Sửa chữa căn hộ",
-      "Vận chuyển đồ",
-      "Dọn dẹp căn hộ",
-    ],
-    handler: "Ban quản trị",
-  },
-  "Khiếu nại": {
-    allowedContents: ["tài sản chung", "mất tài sản"],
-    handler: "Công an",
-  },
-  "Khai báo tạm trú": {
-    allowedContents: ["Khai báo thông tin"],
-    handler: "Ban quản trị",
-  },
+// Enum theo đúng bảng services trong MySQL (design)
+const SERVICE_TYPES = [
+  "Dịch vụ trung cư",
+  "Khiếu nại",
+  "Khai báo tạm trú",
+];
+
+const CONTENT_BY_TYPE = {
+  "Dịch vụ trung cư": [
+    "Làm thẻ xe",
+    "Sửa chữa căn hộ",
+    "Vận chuyển đồ",
+    "Dọn dẹp căn hộ",
+  ],
+  "Khiếu nại": ["tài sản chung", "mất tài sản"],
+  "Khai báo tạm trú": ["Khai báo thông tin"],
 };
+
+const HANDLER_BY_TYPE = {
+  "Dịch vụ trung cư": "Ban quản trị",
+  "Khiếu nại": "Công an",
+  "Khai báo tạm trú": "Ban quản trị",
+};
+
+const SERVICE_STATUS = ["Đã ghi nhận", "Đã xử lý"];
+
+const PROBLEMS = [
+  "Phản hồi chậm",
+  "Thiếu chuyên nghiệp",
+  "Chi phí đắt",
+  "Ko vấn đề",
+];
+
+const RATES = [
+  "Chất lượng cao",
+  "Chất lượng tốt",
+  "Chất lượng ổn",
+  "Chất lượng kém",
+];
 
 // -------- POST /services: tạo mới service --------
 app.post("/services", async (req, res) => {
-  const { apartment_id, service_type, content, note } = req.body || {};
+  const {
+    apartment_id,
+    service_type,
+    content,
+    note,
+    problems,
+    rates,
+    scripts,
+    servicestatus, // cho phép gửi lên, mặc định "Đã ghi nhận"
+  } = req.body || {};
 
   try {
     // 1) Validate input bắt buộc
@@ -821,8 +853,7 @@ app.post("/services", async (req, res) => {
     }
 
     // 2) Kiểm tra loại dịch vụ
-    const config = SERVICE_CONFIG[service_type];
-    if (!config) {
+    if (!SERVICE_TYPES.includes(service_type)) {
       return res.status(400).json({
         error:
           "service_type không hợp lệ. Chỉ nhận: 'Dịch vụ trung cư', 'Khiếu nại', 'Khai báo tạm trú'",
@@ -830,28 +861,52 @@ app.post("/services", async (req, res) => {
     }
 
     // 3) Kiểm tra content hợp lệ với loại đó
-    if (!config.allowedContents.includes(content)) {
+    const allowedContents = CONTENT_BY_TYPE[service_type] || [];
+    if (!allowedContents.includes(content)) {
       return res.status(400).json({
-        error: `Content không hợp lệ cho loại '${service_type}'. Chỉ nhận: ${config.allowedContents.join(
+        error: `Content không hợp lệ cho loại '${service_type}'. Chỉ nhận: ${allowedContents.join(
           ", "
         )}`,
       });
     }
 
-    const ben_xu_ly = config.handler;
-    const servicestatus = "Đã ghi nhận";
+    // 4) servicestatus (nếu không gửi thì mặc định "Đã ghi nhận")
+    const serviceStatusValue =
+      servicestatus && SERVICE_STATUS.includes(servicestatus)
+        ? servicestatus
+        : "Đã ghi nhận";
+
+    // 5) problems & rates theo enum
+    const problemsValue = problems || "Ko vấn đề";
+    if (!PROBLEMS.includes(problemsValue)) {
+      return res.status(400).json({
+        error: `problems không hợp lệ. Chỉ nhận: ${PROBLEMS.join(", ")}`,
+      });
+    }
+
+    const ratesValue = rates || "Chất lượng ổn";
+    if (!RATES.includes(ratesValue)) {
+      return res.status(400).json({
+        error: `rates không hợp lệ. Chỉ nhận: ${RATES.join(", ")}`,
+      });
+    }
+
+    const ben_xu_ly = HANDLER_BY_TYPE[service_type];
     const nowIso = new Date().toISOString();
     const id = await nextId("seq:service");
 
     const service = {
-      id,                             // id service trong KV
+      id, // tương ứng service_id trong bảng MySQL
       apartment_id,
       service_type,
       content,
       ben_xu_ly,
-      servicestatus,
-      handle_date: nowIso,
+      servicestatus: serviceStatusValue,
+      handle_date: nowIso, // trong MySQL default CURRENT_TIMESTAMP
       note: note || null,
+      problems: problemsValue,
+      rates: ratesValue,
+      scripts: scripts || null,
       created_at: nowIso,
       updated_at: nowIso,
     };
@@ -925,7 +980,15 @@ app.get("/services/:id", async (req, res) => {
 // -------- PATCH /services/:id --------
 app.patch("/services/:id", async (req, res) => {
   const { id } = req.params;
-  const { service_type, content, servicestatus, note } = req.body || {};
+  const {
+    service_type,
+    content,
+    servicestatus,
+    note,
+    problems,
+    rates,
+    scripts,
+  } = req.body || {};
 
   try {
     let service = await kv.get(serviceKey(id));
@@ -933,24 +996,24 @@ app.patch("/services/:id", async (req, res) => {
       return res.status(404).json({ error: "Không tìm thấy dịch vụ" });
     }
 
-    // -------- 1) Xử lý đổi loại dịch vụ / content --------
+    // 1) Đổi loại dịch vụ / content
     if (service_type !== undefined || content !== undefined) {
       const newServiceType =
         service_type !== undefined ? service_type : service.service_type;
       const newContent =
         content !== undefined ? content : service.content;
 
-      const config = SERVICE_CONFIG[newServiceType];
-      if (!config) {
+      if (!SERVICE_TYPES.includes(newServiceType)) {
         return res.status(400).json({
           error:
             "service_type không hợp lệ. Chỉ nhận: 'Dịch vụ trung cư', 'Khiếu nại', 'Khai báo tạm trú'",
         });
       }
 
-      if (!config.allowedContents.includes(newContent)) {
+      const allowedContents = CONTENT_BY_TYPE[newServiceType] || [];
+      if (!allowedContents.includes(newContent)) {
         return res.status(400).json({
-          error: `Content không hợp lệ cho loại '${newServiceType}'. Chỉ nhận: ${config.allowedContents.join(
+          error: `Content không hợp lệ cho loại '${newServiceType}'. Chỉ nhận: ${allowedContents.join(
             ", "
           )}`,
         });
@@ -958,13 +1021,12 @@ app.patch("/services/:id", async (req, res) => {
 
       service.service_type = newServiceType;
       service.content = newContent;
-      service.ben_xu_ly = config.handler;
+      service.ben_xu_ly = HANDLER_BY_TYPE[newServiceType];
     }
 
-    // -------- 2) servicestatus --------
+    // 2) servicestatus
     if (servicestatus !== undefined) {
-      const allowedStatus = ["Đã ghi nhận", "Đã xử lý"];
-      if (!allowedStatus.includes(servicestatus)) {
+      if (!SERVICE_STATUS.includes(servicestatus)) {
         return res.status(400).json({
           error:
             "servicestatus không hợp lệ (chỉ nhận 'Đã ghi nhận' hoặc 'Đã xử lý')",
@@ -972,14 +1034,40 @@ app.patch("/services/:id", async (req, res) => {
       }
       service.servicestatus = servicestatus;
 
+      // Nếu chuyển sang "Đã xử lý" thì cập nhật handle_date
       if (servicestatus === "Đã xử lý") {
         service.handle_date = new Date().toISOString();
       }
     }
 
-    // -------- 3) note --------
+    // 3) note
     if (note !== undefined) {
       service.note = note || null;
+    }
+
+    // 4) problems
+    if (problems !== undefined) {
+      if (!PROBLEMS.includes(problems)) {
+        return res.status(400).json({
+          error: `problems không hợp lệ. Chỉ nhận: ${PROBLEMS.join(", ")}`,
+        });
+      }
+      service.problems = problems;
+    }
+
+    // 5) rates
+    if (rates !== undefined) {
+      if (!RATES.includes(rates)) {
+        return res.status(400).json({
+          error: `rates không hợp lệ. Chỉ nhận: ${RATES.join(", ")}`,
+        });
+      }
+      service.rates = rates;
+    }
+
+    // 6) scripts (text tự do)
+    if (scripts !== undefined) {
+      service.scripts = scripts || null;
     }
 
     service.updated_at = new Date().toISOString();
@@ -1014,6 +1102,238 @@ app.delete("/services/:id", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ====================================================
+// ====================== FORMS =======================
+// ====================================================
+//
+// Forms: liên kết cư dân + dịch vụ
+// KV structure:
+//   form:<id>  => object form
+//   forms:all  => zset tất cả forms (score = created_at)
+//   forms:apartment:<apartment_id> => zset theo căn hộ
+//   forms:service:<service_id>     => zset theo service
+
+// -------- POST /forms: tạo mới form --------
+app.post("/forms", async (req, res) => {
+  const {
+    full_name,
+    apartment_id,
+    cccd,
+    dob,
+    start_date,
+    end_date,
+    note,
+    service_id,
+  } = req.body || {};
+
+  try {
+    // bắt buộc: full_name, apartment_id
+    if (!full_name || !apartment_id) {
+      return res.status(400).json({
+        error: "Thiếu full_name hoặc apartment_id",
+      });
+    }
+
+    const id = await nextId("seq:form");
+    const nowIso = new Date().toISOString();
+
+    const form = {
+      id, // tương ứng form_id trong bảng MySQL
+      full_name,
+      apartment_id,
+      cccd: cccd || null,
+      dob: dob || null, // lưu string ISO / Y-M-D, FE tự chuẩn hóa
+      start_date: start_date || null,
+      end_date: end_date || null,
+      note: note || null,
+      service_id: service_id || null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    await kv.set(formKey(id), form);
+    await kv.zadd("forms:all", {
+      score: Date.parse(nowIso),
+      member: String(id),
+    });
+    await kv.zadd(`forms:apartment:${apartment_id}`, {
+      score: Date.parse(nowIso),
+      member: String(id),
+    });
+    if (service_id) {
+      await kv.zadd(`forms:service:${service_id}`, {
+        score: Date.parse(nowIso),
+        member: String(id),
+      });
+    }
+
+    return res.status(201).json({
+      message: "Tạo form thành công",
+      form_id: id,
+    });
+  } catch (err) {
+    console.error("POST /forms error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// -------- GET /forms: tất cả forms --------
+app.get("/forms", async (req, res) => {
+  try {
+    const ids = await kv.zrange("forms:all", 0, -1, { rev: true });
+    const forms = await Promise.all(ids.map((id) => kv.get(formKey(id))));
+    res.json(forms.filter(Boolean));
+  } catch (err) {
+    console.error("GET /forms error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -------- GET /forms/:id: chi tiết 1 form --------
+app.get("/forms/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const form = await kv.get(formKey(id));
+    if (!form) {
+      return res.status(404).json({ error: "Không tìm thấy form" });
+    }
+    res.json(form);
+  } catch (err) {
+    console.error("GET /forms/:id error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -------- GET /forms/by-apartment/:apartment_id --------
+app.get("/forms/by-apartment/:apartment_id", async (req, res) => {
+  const { apartment_id } = req.params;
+  try {
+    const ids = await kv.zrange(
+      `forms:apartment:${apartment_id}`,
+      0,
+      -1,
+      { rev: true }
+    );
+    const forms = await Promise.all(ids.map((id) => kv.get(formKey(id))));
+    res.json(forms.filter(Boolean));
+  } catch (err) {
+    console.error("GET /forms/by-apartment error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -------- GET /forms/by-service/:service_id --------
+app.get("/forms/by-service/:service_id", async (req, res) => {
+  const { service_id } = req.params;
+  try {
+    const ids = await kv.zrange(
+      `forms:service:${service_id}`,
+      0,
+      -1,
+      { rev: true }
+    );
+    const forms = await Promise.all(ids.map((id) => kv.get(formKey(id))));
+    res.json(forms.filter(Boolean));
+  } catch (err) {
+    console.error("GET /forms/by-service error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -------- PATCH /forms/:id: cập nhật form --------
+app.patch("/forms/:id", async (req, res) => {
+  const { id } = req.params;
+  const {
+    full_name,
+    apartment_id,
+    cccd,
+    dob,
+    start_date,
+    end_date,
+    note,
+    service_id,
+  } = req.body || {};
+
+  try {
+    let form = await kv.get(formKey(id));
+    if (!form) {
+      return res.status(404).json({ error: "Không tìm thấy form" });
+    }
+
+    const oldApartment = form.apartment_id;
+    const oldServiceId = form.service_id;
+
+    if (full_name !== undefined) form.full_name = full_name || "";
+    if (apartment_id !== undefined) form.apartment_id = apartment_id || "";
+    if (cccd !== undefined) form.cccd = cccd || null;
+    if (dob !== undefined) form.dob = dob || null;
+    if (start_date !== undefined) form.start_date = start_date || null;
+    if (end_date !== undefined) form.end_date = end_date || null;
+    if (note !== undefined) form.note = note || null;
+    if (service_id !== undefined) form.service_id = service_id || null;
+
+    form.updated_at = new Date().toISOString();
+
+    await kv.set(formKey(id), form);
+
+    // cập nhật lại index zset nếu đổi apartment hoặc service
+    if (apartment_id !== undefined && apartment_id !== oldApartment) {
+      await kv.zrem(`forms:apartment:${oldApartment}`, String(id));
+      await kv.zadd(`forms:apartment:${form.apartment_id}`, {
+        score: Date.parse(form.created_at || form.updated_at),
+        member: String(id),
+      });
+    }
+
+    if (service_id !== undefined && service_id !== oldServiceId) {
+      if (oldServiceId) {
+        await kv.zrem(`forms:service:${oldServiceId}`, String(id));
+      }
+      if (form.service_id) {
+        await kv.zadd(`forms:service:${form.service_id}`, {
+          score: Date.parse(form.created_at || form.updated_at),
+          member: String(id),
+        });
+      }
+    }
+
+    return res.json({ message: "Cập nhật form thành công" });
+  } catch (err) {
+    console.error("PATCH /forms/:id error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// -------- DELETE /forms/:id --------
+app.delete("/forms/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: "Thiếu id" });
+
+  try {
+    const form = await kv.get(formKey(id));
+    if (!form) {
+      return res.status(404).json({ error: "Không tìm thấy form để xóa" });
+    }
+
+    await kv.del(formKey(id));
+    await kv.zrem("forms:all", String(id));
+    await kv.zrem(`forms:apartment:${form.apartment_id}`, String(id));
+    if (form.service_id) {
+      await kv.zrem(`forms:service:${form.service_id}`, String(id));
+    }
+
+    res.json({ message: "Đã xóa form thành công" });
+  } catch (err) {
+    console.error("DELETE /forms/:id error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+
+
+
 
 // ================== EXPORT CHO VERCEL ==================
 module.exports = app;
