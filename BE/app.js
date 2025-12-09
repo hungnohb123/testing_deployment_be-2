@@ -58,6 +58,11 @@ function notificationKey(id) {
   return `notification:${id}`;
 }
 
+// *** THÊM MỚI: helper cho services ***
+function serviceKey(id) {
+  return `service:${id}`;
+}
+
 // ================== ROOT & HEALTH ==================
 app.get("/", (req, res) => {
   res.send("Hello Express + Vercel KV!");
@@ -778,8 +783,6 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// ================== EXPORT CHO VERCEL ==================
-module.exports = app;
 // ====================================================
 // ==================== SERVICES ======================
 // ====================================================
@@ -1011,3 +1014,6 @@ app.delete("/services/:id", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ================== EXPORT CHO VERCEL ==================
+module.exports = app;
