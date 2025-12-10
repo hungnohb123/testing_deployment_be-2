@@ -12,6 +12,10 @@ const express = require("express");
 const cors = require("cors");
 const { kv } = require("@vercel/kv");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+// ================== JWT CONFIG ==================
+const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
+const JWT_EXPIRES_IN = "7d"; // hoặc "1d"
 
 const app = express();
 
@@ -765,7 +769,20 @@ app.post("/login", async (req, res) => {
     const safeUser = { ...user };
     delete safeUser.password;
 
-    res.json({ message: "Đăng nhập thành công", user: safeUser });
+    // Tạo JWT token
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+        full_name: user.full_name,
+        apartment_id: user.apartment_id,
+        email: user.email,
+      },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+
+    res.json({ message: "Đăng nhập thành công", user: safeUser, token });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
