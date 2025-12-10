@@ -11,6 +11,7 @@ dayjs.extend(timezone);
 const express = require("express");
 const cors = require("cors");
 const { kv } = require("@vercel/kv");
+const bcrypt = require("bcryptjs");
 
 const app = express();
 
@@ -169,6 +170,8 @@ app.post("/residents", async (req, res) => {
 
     const id = await nextId("seq:resident");
     const full_name = `${first_name.trim()} ${last_name.trim()}`;
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     const user = {
       id,
@@ -182,7 +185,7 @@ app.post("/residents", async (req, res) => {
       role: role || null,
       residency_status: residency_status || null,
       email: email || null,
-      password,
+      password: hashedPassword,
       state: "active",
     };
 
@@ -247,8 +250,10 @@ app.put("/residents/:id", async (req, res) => {
     if (residency_status !== undefined && residency_status !== null)
       updated.residency_status = residency_status;
     if (email !== undefined && email !== null) updated.email = email;
-    if (password !== undefined && password !== null)
-      updated.password = password;
+    if (password !== undefined && password !== null) {
+      const saltRounds = 10;
+      updated.password = await bcrypt.hash(password, saltRounds);
+    }
 
     await kv.set(residentKey(id), updated);
     await updateResidentIndexes(existing, updated);
@@ -748,7 +753,7 @@ app.post("/login", async (req, res) => {
     const user = await kv.get(residentKey(id));
     if (
       !user ||
-      user.password !== password ||
+      !(await bcrypt.compare(password, user.password)) ||
       user.role !== role ||
       (user.state && String(user.state).toLowerCase() === "inactive")
     ) {
