@@ -749,23 +749,34 @@ app.post("/login", async (req, res) => {
       id = await kv.get(`login:phone:${username}`);
     }
     if (!id) {
+      return res.status(401).json({
+        error: "Sai tài khoản, mật khẩu, vai trò hoặc tài khoản đã bị xoá",
+      });
+    }
+
+    const user = await kv.get(residentKey(id));
+    // Kiểm tra trạng thái tài khoản trước
+    if (
+      !user ||
+      (user.state && String(user.state).toLowerCase() === "inactive")
+    ) {
       return res
         .status(401)
         .json({
           error: "Sai tài khoản, mật khẩu, vai trò hoặc tài khoản đã bị xoá",
         });
     }
-
-    const user = await kv.get(residentKey(id));
+    // Kiểm tra mật khẩu và vai trò
     if (
-      !user ||
       !(await bcrypt.compare(password, user.password)) ||
-      user.role !== role ||
-      (user.state && String(user.state).toLowerCase() === "inactive")
+      user.role !== role
     ) {
       return res
         .status(401)
-        .json({ error: "Sai tài khoản, mật khẩu hoặc vai trò" });
+        .json({
+          error:
+            "Sai tài khoản, mật khẩu hoặc vai trò hoặc tài khoản đã bị xoá",
+        });
     }
 
     const safeUser = { ...user };
