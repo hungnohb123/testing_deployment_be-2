@@ -751,7 +751,9 @@ app.post("/login", async (req, res) => {
     if (!id) {
       return res
         .status(401)
-        .json({ error: "Sai tài khoản, mật khẩu hoặc vai trò" });
+        .json({
+          error: "Sai tài khoản, mật khẩu, vai trò hoặc tài khoản đã bị xoá",
+        });
     }
 
     const user = await kv.get(residentKey(id));
