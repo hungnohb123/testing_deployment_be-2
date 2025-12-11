@@ -65,6 +65,11 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+// Ensure CORS headers for preflight OPTIONS request on /login
+app.options("/login", cors(corsOptions), (req, res) => {
+  res.sendStatus(200);
+});
+
 // ================== HELPER: ID & KEY ==================
 
 async function nextId(seqKey) {
@@ -1133,10 +1138,6 @@ app.delete("/services/:id", async (req, res) => {
 // Forms: liên kết cư dân + dịch vụ
 // KV structure:
 //   form:<id>  => object form
-  // Ensure CORS headers for preflight OPTIONS request on /login
-  app.options("/login", cors(corsOptions), (req, res) => {
-    res.sendStatus(200);
-  });
 //   forms:all  => zset tất cả forms (score = created_at)
 //   forms:apartment:<apartment_id> => zset theo căn hộ
 //   forms:service:<service_id>     => zset theo service
