@@ -22,13 +22,6 @@ const allowedOrigins = [
 ];
 
 const corsOptions = {
-  // origin: function (origin, callback) {
-  //   if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-  //     callback(null, true);
-  //   } else {
-  //     callback(new Error("Not allowed by CORS"));
-  //   }
-  // },
   origin: allowedOrigins,
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
   credentials: true,
@@ -36,11 +29,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-// Ensure CORS headers for preflight OPTIONS request on /login
-// app.options("/login", cors(corsOptions), (req, res) => {
-//   res.sendStatus(200);
-// });
 app.options("*", cors(corsOptions)); // Preflight cho mọi route
 app.use(express.json());
 
@@ -50,21 +38,7 @@ const loginLimiter = rateLimit({
   max: 6, // tối đa 6 lần
   standardHeaders: true,
   legacyHeaders: false,
-  // handler: (req, res) => {
-  //   // Đảm bảo luôn trả về CORS header
-  //   const origin = req.headers.origin;
-  //   const allowedOrigins = [
-  //     "https://it-3180-2025-1-se-08.vercel.app",
-  //     "https://testing-deployment-fe.vercel.app",
-  //     "http://localhost:3000",
-  //   ];
-  //   if (origin && allowedOrigins.includes(origin)) {
-  //     res.setHeader("Access-Control-Allow-Origin", origin);
-  //     res.setHeader("Access-Control-Allow-Credentials", "true");
-  //   }
-  //   res.status(429).json({ error: "Thử lại sau 1 phút" });
-  // },
-  message: { error: "Thử lại sau 1 phút" }, // Trả về JSON gọn gàng
+  message: { error: "Đăng nhập quá nhiều lần. Vui lòng thử lại sau 1 phút" }, // Trả về JSON gọn gàng
   skip: (req, res) => req.method === "OPTIONS",
 });
 
