@@ -743,47 +743,55 @@ app.delete("/notifications/:id", async (req, res) => {
 app.post("/login", loginLimiter, async (req, res) => {
   const { username, password, role } = req.body || {};
 
+  // 1. Validate Input (Nhanh nhất - không tốn I/O)
   if (!username || !password || !role) {
-    return res
-      .status(400)
-      .json({ error: "Thiếu username, password hoặc role" });
+    return res.status(400).json({ error: "Thiếu thông tin đăng nhập" });
   }
 
   try {
+    // 2. Tìm User (Tốn I/O - Bắt buộc)
     let id = await kv.get(`login:email:${username}`);
     if (!id) {
       id = await kv.get(`login:phone:${username}`);
     }
+
     if (!id) {
-      return res.status(401).json({
-        error: "Sai tài khoản, mật khẩu, vai trò hoặc tài khoản đã bị xoá",
-      });
+      return res.status(404).json({ error: "Tài khoản không tồn tại" });
     }
 
     const user = await kv.get(residentKey(id));
-    // Kiểm tra trạng thái tài khoản trước
-    if (
-      !user ||
-      (user.state && String(user.state).toLowerCase() === "inactive")
-    ) {
-      return res.status(401).json({
-        error: "Sai tài khoản, mật khẩu, vai trò hoặc tài khoản đã bị xoá",
-      });
+    if (!user) {
+      return res.status(404).json({ error: "Dữ liệu người dùng lỗi" });
     }
-    // Kiểm tra mật khẩu và vai trò
-    if (
-      !(await bcrypt.compare(password, user.password)) ||
-      user.role !== role
-    ) {
-      return res.status(401).json({
-        error: "Sai tài khoản, mật khẩu hoặc vai trò hoặc tài khoản đã bị xoá",
+
+    // 3. Check Status (Rất nhanh - CPU thấp)
+    // Ưu tiên chặn tài khoản bị khóa để tiết kiệm tài nguyên
+    const userState = String(user.state || "inactive").toLowerCase();
+    if (userState !== "active") {
+      return res.status(403).json({
+        error: "Tài khoản chưa kích hoạt hoặc đã bị khóa",
       });
     }
 
+    // 4. Check Role (Rất nhanh - CPU thấp)
+    // Nếu sai Role, chặn luôn, không cần tốn công check pass
+    if (user.role !== role) {
+      return res.status(403).json({
+        error: `Tài khoản này không có quyền truy cập với vai trò ${role}`,
+      });
+    }
+
+    // 5. Check Password (CHẬM - CPU cao)
+    // Chỉ thực hiện khi 4 bước trên đã qua. Đây là bước tốn tài nguyên nhất.
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res.status(401).json({ error: "Mật khẩu không chính xác" });
+    }
+
+    // 6. Tạo Token (Thành công)
     const safeUser = { ...user };
     delete safeUser.password;
 
-    // Tạo JWT token
     const token = jwt.sign(
       {
         id: user.id,
@@ -798,7 +806,8 @@ app.post("/login", loginLimiter, async (req, res) => {
 
     res.json({ message: "Đăng nhập thành công", user: safeUser, token });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Lỗi hệ thống" });
   }
 });
 
