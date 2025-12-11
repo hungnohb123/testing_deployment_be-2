@@ -9,6 +9,15 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 const express = require("express");
+const rateLimit = require("express-rate-limit");
+// ================== RATE LIMITING ==================
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 phút
+  max: 6, // tối đa 6 lần
+  message: { error: "Thử lại sau 1 phút" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 const cors = require("cors");
 const { kv } = require("@vercel/kv");
 const bcrypt = require("bcryptjs");
@@ -734,7 +743,7 @@ app.delete("/notifications/:id", async (req, res) => {
 // ====================== LOGIN =======================
 // ====================================================
 
-app.post("/login", async (req, res) => {
+app.post("/login", loginLimiter, async (req, res) => {
   const { username, password, role } = req.body || {};
 
   if (!username || !password || !role) {
