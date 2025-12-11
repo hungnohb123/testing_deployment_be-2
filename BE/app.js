@@ -7,41 +7,12 @@ const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
 dayjs.extend(utc);
 dayjs.extend(timezone);
-
 const express = require("express");
 const rateLimit = require("express-rate-limit");
-// ================== RATE LIMITING ==================
-const loginLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 phút
-  max: 6, // tối đa 6 lần
-  standardHeaders: true,
-  legacyHeaders: false,
-  handler: (req, res) => {
-    // Đảm bảo luôn trả về CORS header
-    const origin = req.headers.origin;
-    const allowedOrigins = [
-      "https://it-3180-2025-1-se-08.vercel.app",
-      "https://testing-deployment-fe.vercel.app",
-      "http://localhost:3000",
-    ];
-    if (origin && allowedOrigins.includes(origin)) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
-    }
-    res.status(429).json({ error: "Thử lại sau 1 phút" });
-  },
-});
 const cors = require("cors");
-const { kv } = require("@vercel/kv");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-// ================== JWT CONFIG ==================
-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
-const JWT_EXPIRES_IN = "7d"; // hoặc "1d"
-
 const app = express();
 
-app.use(express.json());
+app.set("trust proxy", 1); // Lấy IP người dùng thật thay vì IP Vercel
 
 // ================== CORS ==================
 const allowedOrigins = [
@@ -51,14 +22,15 @@ const allowedOrigins = [
 ];
 
 const corsOptions = {
-  origin: function (origin, callback) {
-    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"],
+  // origin: function (origin, callback) {
+  //   if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+  //     callback(null, true);
+  //   } else {
+  //     callback(new Error("Not allowed by CORS"));
+  //   }
+  // },
+  origin: allowedOrigins,
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
   credentials: true,
   optionsSuccessStatus: 200,
 };
@@ -66,9 +38,42 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Ensure CORS headers for preflight OPTIONS request on /login
-app.options("/login", cors(corsOptions), (req, res) => {
-  res.sendStatus(200);
+// app.options("/login", cors(corsOptions), (req, res) => {
+//   res.sendStatus(200);
+// });
+app.options("*", cors(corsOptions)); // Preflight cho mọi route
+app.use(express.json());
+
+// ================== RATE LIMITING ==================
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 phút
+  max: 6, // tối đa 6 lần
+  standardHeaders: true,
+  legacyHeaders: false,
+  // handler: (req, res) => {
+  //   // Đảm bảo luôn trả về CORS header
+  //   const origin = req.headers.origin;
+  //   const allowedOrigins = [
+  //     "https://it-3180-2025-1-se-08.vercel.app",
+  //     "https://testing-deployment-fe.vercel.app",
+  //     "http://localhost:3000",
+  //   ];
+  //   if (origin && allowedOrigins.includes(origin)) {
+  //     res.setHeader("Access-Control-Allow-Origin", origin);
+  //     res.setHeader("Access-Control-Allow-Credentials", "true");
+  //   }
+  //   res.status(429).json({ error: "Thử lại sau 1 phút" });
+  // },
+  message: { error: "Thử lại sau 1 phút" }, // Trả về JSON gọn gàng
+  skip: (req, res) => req.method === "OPTIONS",
 });
+
+const { kv } = require("@vercel/kv");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+// ================== JWT CONFIG ==================
+const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
+const JWT_EXPIRES_IN = "7d"; // hoặc "1d"
 
 // ================== HELPER: ID & KEY ==================
 
