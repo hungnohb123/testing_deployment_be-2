@@ -14,9 +14,22 @@ const rateLimit = require("express-rate-limit");
 const loginLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 phút
   max: 6, // tối đa 6 lần
-  message: { error: "Thử lại sau 1 phút" },
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res) => {
+    // Đảm bảo luôn trả về CORS header
+    const origin = req.headers.origin;
+    const allowedOrigins = [
+      "https://it-3180-2025-1-se-08.vercel.app",
+      "https://testing-deployment-fe.vercel.app",
+      "http://localhost:3000",
+    ];
+    if (origin && allowedOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
+    res.status(429).json({ error: "Thử lại sau 1 phút" });
+  },
 });
 const cors = require("cors");
 const { kv } = require("@vercel/kv");
@@ -769,23 +782,18 @@ app.post("/login", loginLimiter, async (req, res) => {
       !user ||
       (user.state && String(user.state).toLowerCase() === "inactive")
     ) {
-      return res
-        .status(401)
-        .json({
-          error: "Sai tài khoản, mật khẩu, vai trò hoặc tài khoản đã bị xoá",
-        });
+      return res.status(401).json({
+        error: "Sai tài khoản, mật khẩu, vai trò hoặc tài khoản đã bị xoá",
+      });
     }
     // Kiểm tra mật khẩu và vai trò
     if (
       !(await bcrypt.compare(password, user.password)) ||
       user.role !== role
     ) {
-      return res
-        .status(401)
-        .json({
-          error:
-            "Sai tài khoản, mật khẩu hoặc vai trò hoặc tài khoản đã bị xoá",
-        });
+      return res.status(401).json({
+        error: "Sai tài khoản, mật khẩu hoặc vai trò hoặc tài khoản đã bị xoá",
+      });
     }
 
     const safeUser = { ...user };
