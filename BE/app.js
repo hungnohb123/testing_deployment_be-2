@@ -505,6 +505,35 @@ app.get("/payments/by-resident/:resident_id", async (req, res) => {
   }
 });
 
+// GET payments by apartment_id
+app.get("/payments/by-apartment/:apartment_id", async (req, res) => {
+  const { apartment_id } = req.params;
+  if (!apartment_id) return res.status(400).json({ error: "Thiếu apartment_id" });
+  try {
+    // Lấy tất cả residents thuộc apartment_id này
+    const residentIds = await kv.zrange("residents:all", 0, -1);
+    const residents = await Promise.all(residentIds.map((id) => kv.get(residentKey(id))));
+    const filteredResidents = residents.filter(r => r && r.apartment_id == apartment_id);
+    const payments = [];
+    for (const resident of filteredResidents) {
+      const ids = await kv.zrange(`payments:resident:${resident.id}`, 0, -1, { rev: true });
+      const residentPayments = await Promise.all(ids.map((id) => kv.get(paymentKey(id))));
+      for (const p of residentPayments) {
+        if (!p) continue;
+        const merged = decoratePayment({
+          ...p,
+          resident_name: resident.full_name || null,
+          apartment_id: resident.apartment_id || null,
+        });
+        payments.push(merged);
+      }
+    }
+    res.json(payments);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET one payment by id
 app.get("/payments/:id", async (req, res) => {
   const { id } = req.params;
