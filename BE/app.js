@@ -10,6 +10,10 @@ dayjs.extend(timezone);
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
+// --- THÊM THƯ VIỆN MỚI ---
+const nodemailer = require("nodemailer");
+const crypto = require("crypto");
+
 const app = express();
 
 app.set("trust proxy", 1); // Lấy IP người dùng thật thay vì IP Vercel
@@ -48,6 +52,15 @@ const jwt = require("jsonwebtoken");
 // ================== JWT CONFIG ==================
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d"; // hoặc "1d"
+
+// ================== NODEMAILER CONFIG (MỚI) ==================
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER, // Cấu hình trong Environment Variables trên Vercel
+    pass: process.env.EMAIL_PASS, // App Password 16 ký tự
+  },
+});
 
 // ================== HELPER: ID & KEY ==================
 
@@ -304,7 +317,184 @@ app.delete("/residents/:id", async (req, res) => {
 });
 
 // ====================================================
-// =================== PAYMENTS (US-008) ==============
+// ============= AUTHENTICATION & PASSWORD ============
+// ====================================================
+
+// API 1: Yêu cầu lấy lại mật khẩu (Gửi Email)
+app.post("/forgot-password", async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: "Vui lòng nhập email" });
+  }
+
+  try {
+    // 1. Tìm user theo email
+    const userId = await kv.get(`login:email:${email}`);
+    if (!userId) {
+      return res
+        .status(404)
+        .json({ error: "Email không tồn tại trong hệ thống" });
+    }
+
+    // 2. Tạo token ngẫu nhiên (20 bytes hex)
+    const resetToken = crypto.randomBytes(20).toString("hex");
+
+    // 3. Lưu token vào Redis với thời gian hết hạn (15 phút = 900 giây)
+    // Key: reset_token:<token> => Value: userId
+    await kv.set(`reset_token:${resetToken}`, userId, { ex: 900 });
+
+    // 4. Tạo đường link reset (Lấy origin từ request hoặc fallback cứng)
+    const frontendUrl =
+      req.get("origin") || "https://testing-deployment-fe.vercel.app";
+    const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
+
+    // 5. Gửi email
+    const mailOptions = {
+      from: `"BQT Chung cư Blue Moon" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Yêu cầu đặt lại mật khẩu - Blue Moon",
+      html: `
+        <h3>Xin chào cư dân,</h3>
+        <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản liên kết với email này.</p>
+        <p>Vui lòng nhấn vào đường link bên dưới để đặt mật khẩu mới (Link có hiệu lực trong 15 phút):</p>
+        <a href="${resetLink}" target="_blank" style="padding: 10px 20px; background-color: #2563EB; color: white; text-decoration: none; border-radius: 5px;">Đặt lại mật khẩu</a>
+        <p>Nếu bạn không yêu cầu, vui lòng bỏ qua email này.</p>
+        <p>Trân trọng,<br>Ban quản trị Blue Moon</p>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.json({ message: "Email sent success" });
+  } catch (err) {
+    console.error("Forgot Password Error:", err);
+    res.status(500).json({ error: "Lỗi hệ thống khi gửi email" });
+  }
+});
+
+// API 2: Thực hiện đổi mật khẩu (Reset Password)
+app.post("/reset-password", async (req, res) => {
+  const { token, new_password } = req.body;
+
+  if (!token || !new_password) {
+    return res.status(400).json({ error: "Thiếu token hoặc mật khẩu mới" });
+  }
+
+  try {
+    // 1. Kiểm tra token trong Redis
+    const userId = await kv.get(`reset_token:${token}`);
+
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ error: "Liên kết không hợp lệ hoặc đã hết hạn" });
+    }
+
+    // 2. Lấy thông tin user
+    const userKey = residentKey(userId);
+    const user = await kv.get(userKey);
+
+    if (!user) {
+      return res.status(404).json({ error: "Người dùng không tồn tại" });
+    }
+
+    // 3. Mã hóa mật khẩu mới
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    // 4. Cập nhật user
+    user.password = hashedPassword;
+    user.updated_at = new Date().toISOString();
+    await kv.set(userKey, user);
+
+    // 5. Xóa token để không dùng lại được
+    await kv.del(`reset_token:${token}`);
+
+    res.json({ message: "Đổi mật khẩu thành công" });
+  } catch (err) {
+    console.error("Reset Password Error:", err);
+    res.status(500).json({ error: "Lỗi hệ thống" });
+  }
+});
+
+// ====================================================
+// ====================== LOGIN =======================
+// ====================================================
+
+app.post("/login", loginLimiter, async (req, res) => {
+  const { username, password, role } = req.body || {};
+
+  // 1. Validate Input (Nhanh nhất - không tốn I/O)
+  if (!username || !password || !role) {
+    return res.status(400).json({ error: "Thiếu thông tin đăng nhập" });
+  }
+
+  try {
+    // 2. Tìm User (Tốn I/O - Bắt buộc)
+    let id = await kv.get(`login:email:${username}`);
+    if (!id) {
+      id = await kv.get(`login:phone:${username}`);
+    }
+
+    if (!id) {
+      return res.status(404).json({ error: "Tài khoản không tồn tại" });
+    }
+
+    const user = await kv.get(residentKey(id));
+    if (!user) {
+      return res.status(404).json({ error: "Dữ liệu người dùng lỗi" });
+    }
+
+    // 3. Check Status (Rất nhanh - CPU thấp)
+    // Ưu tiên chặn tài khoản bị khóa để tiết kiệm tài nguyên
+    const userState = String(user.state || "inactive").toLowerCase();
+    if (userState !== "active") {
+      return res.status(403).json({
+        error: "Tài khoản chưa kích hoạt hoặc đã bị khóa",
+      });
+    }
+
+    // 4. Check Role (Rất nhanh - CPU thấp)
+    // Nếu sai Role, chặn luôn, không cần tốn công check pass
+    if (user.role !== role) {
+      return res.status(403).json({
+        error: `Tài khoản này không có quyền truy cập với vai trò ${role}`,
+      });
+    }
+
+    // 5. Check Password (CHẬM - CPU cao)
+    // Chỉ thực hiện khi 4 bước trên đã qua. Đây là bước tốn tài nguyên nhất.
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res.status(401).json({ error: "Mật khẩu không chính xác" });
+    }
+
+    // 6. Tạo Token (Thành công)
+    const safeUser = { ...user };
+    delete safeUser.password;
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+        full_name: user.full_name,
+        apartment_id: user.apartment_id,
+        email: user.email,
+      },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+
+    res.json({ message: "Đăng nhập thành công", user: safeUser, token });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Lỗi hệ thống" });
+  }
+});
+
+// ====================================================
+// ==================== PAYMENTS (US-008) ==============
 // ====================================================
 
 function decoratePayment(p) {
@@ -771,81 +961,6 @@ app.delete("/notifications/:id", async (req, res) => {
     res.json({ message: "Notification deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-// ====================================================
-// ====================== LOGIN =======================
-// ====================================================
-
-app.post("/login", loginLimiter, async (req, res) => {
-  const { username, password, role } = req.body || {};
-
-  // 1. Validate Input (Nhanh nhất - không tốn I/O)
-  if (!username || !password || !role) {
-    return res.status(400).json({ error: "Thiếu thông tin đăng nhập" });
-  }
-
-  try {
-    // 2. Tìm User (Tốn I/O - Bắt buộc)
-    let id = await kv.get(`login:email:${username}`);
-    if (!id) {
-      id = await kv.get(`login:phone:${username}`);
-    }
-
-    if (!id) {
-      return res.status(404).json({ error: "Tài khoản không tồn tại" });
-    }
-
-    const user = await kv.get(residentKey(id));
-    if (!user) {
-      return res.status(404).json({ error: "Dữ liệu người dùng lỗi" });
-    }
-
-    // 3. Check Status (Rất nhanh - CPU thấp)
-    // Ưu tiên chặn tài khoản bị khóa để tiết kiệm tài nguyên
-    const userState = String(user.state || "inactive").toLowerCase();
-    if (userState !== "active") {
-      return res.status(403).json({
-        error: "Tài khoản chưa kích hoạt hoặc đã bị khóa",
-      });
-    }
-
-    // 4. Check Role (Rất nhanh - CPU thấp)
-    // Nếu sai Role, chặn luôn, không cần tốn công check pass
-    if (user.role !== role) {
-      return res.status(403).json({
-        error: `Tài khoản này không có quyền truy cập với vai trò ${role}`,
-      });
-    }
-
-    // 5. Check Password (CHẬM - CPU cao)
-    // Chỉ thực hiện khi 4 bước trên đã qua. Đây là bước tốn tài nguyên nhất.
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res.status(401).json({ error: "Mật khẩu không chính xác" });
-    }
-
-    // 6. Tạo Token (Thành công)
-    const safeUser = { ...user };
-    delete safeUser.password;
-
-    const token = jwt.sign(
-      {
-        id: user.id,
-        role: user.role,
-        full_name: user.full_name,
-        apartment_id: user.apartment_id,
-        email: user.email,
-      },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
-    );
-
-    res.json({ message: "Đăng nhập thành công", user: safeUser, token });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Lỗi hệ thống" });
   }
 });
 

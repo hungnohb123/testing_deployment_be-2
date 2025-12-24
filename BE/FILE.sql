@@ -36,6 +36,11 @@ CREATE TABLE user (
   residency_status VARCHAR(30),
   email          VARCHAR(50),
   password       VARCHAR(100) NOT NULL,
+  
+  -- Thêm 2 cột cho chức năng Quên mật khẩu
+  reset_password_token   VARCHAR(255) DEFAULT NULL,
+  reset_password_expires DATETIME DEFAULT NULL,
+
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 ENGINE = InnoDB
