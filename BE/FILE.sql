@@ -99,15 +99,17 @@ CREATE TABLE services (
 
   apartment_id VARCHAR(20) NOT NULL,            -- Khóa ngoại tới user.apartment_id
 
-  content ENUM(
-    'Làm thẻ xe',
-    'Sửa chữa căn hộ',
-    'Vận chuyển đồ',
-    'Dọn dẹp căn hộ',
-    'tài sản chung',
-    'mất tài sản',
-    'Khai báo thông tin'
-  ) NOT NULL,
+  content VARCHAR(255) NOT NULL,
+
+  -- content ENUM(
+  --   'Làm thẻ xe',
+  --   'Sửa chữa căn hộ',
+  --   'Vận chuyển đồ',
+  --   'Dọn dẹp căn hộ',
+  --   'tài sản chung',
+  --   'mất tài sản',
+  --   'Khai báo thông tin'
+  -- ) NOT NULL,
 
   service_type ENUM(
     'Dịch vụ trung cư',

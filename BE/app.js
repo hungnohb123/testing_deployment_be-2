@@ -508,16 +508,25 @@ app.get("/payments/by-resident/:resident_id", async (req, res) => {
 // GET payments by apartment_id
 app.get("/payments/by-apartment/:apartment_id", async (req, res) => {
   const { apartment_id } = req.params;
-  if (!apartment_id) return res.status(400).json({ error: "Thiếu apartment_id" });
+  if (!apartment_id)
+    return res.status(400).json({ error: "Thiếu apartment_id" });
   try {
     // Lấy tất cả residents thuộc apartment_id này
     const residentIds = await kv.zrange("residents:all", 0, -1);
-    const residents = await Promise.all(residentIds.map((id) => kv.get(residentKey(id))));
-    const filteredResidents = residents.filter(r => r && r.apartment_id == apartment_id);
+    const residents = await Promise.all(
+      residentIds.map((id) => kv.get(residentKey(id)))
+    );
+    const filteredResidents = residents.filter(
+      (r) => r && r.apartment_id == apartment_id
+    );
     const payments = [];
     for (const resident of filteredResidents) {
-      const ids = await kv.zrange(`payments:resident:${resident.id}`, 0, -1, { rev: true });
-      const residentPayments = await Promise.all(ids.map((id) => kv.get(paymentKey(id))));
+      const ids = await kv.zrange(`payments:resident:${resident.id}`, 0, -1, {
+        rev: true,
+      });
+      const residentPayments = await Promise.all(
+        ids.map((id) => kv.get(paymentKey(id)))
+      );
       for (const p of residentPayments) {
         if (!p) continue;
         const merged = decoratePayment({
@@ -909,15 +918,8 @@ app.post("/services", async (req, res) => {
       });
     }
 
-    // 3) Kiểm tra content hợp lệ với loại đó
-    const allowedContents = CONTENT_BY_TYPE[service_type] || [];
-    if (!allowedContents.includes(content)) {
-      return res.status(400).json({
-        error: `Content không hợp lệ cho loại '${service_type}'. Chỉ nhận: ${allowedContents.join(
-          ", "
-        )}`,
-      });
-    }
+    // [ĐÃ SỬA]: Bỏ kiểm tra content có trong danh sách cứng
+    // Để cho phép "Nội dung khác" (custom text)
 
     // 4) servicestatus (nếu không gửi thì mặc định "Đã ghi nhận")
     const serviceStatusValue =
@@ -1055,14 +1057,7 @@ app.patch("/services/:id", async (req, res) => {
         });
       }
 
-      const allowedContents = CONTENT_BY_TYPE[newServiceType] || [];
-      if (!allowedContents.includes(newContent)) {
-        return res.status(400).json({
-          error: `Content không hợp lệ cho loại '${newServiceType}'. Chỉ nhận: ${allowedContents.join(
-            ", "
-          )}`,
-        });
-      }
+      // [ĐÃ SỬA]: Bỏ kiểm tra content có trong danh sách cứng
 
       service.service_type = newServiceType;
       service.content = newContent;
