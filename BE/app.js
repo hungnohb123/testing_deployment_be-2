@@ -346,16 +346,16 @@ app.post("/forgot-password", async (req, res) => {
 
     // 4. Tạo đường link reset (Lấy origin từ request hoặc fallback cứng)
     const frontendUrl =
-      req.get("origin") || "https://testing-deployment-fe.vercel.app";
+      req.get("origin") || "https://it-3180-2025-1-se-08.vercel.app";
     const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
 
     // 5. Gửi email
     const mailOptions = {
       from: `"BQT Chung cư Blue Moon" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: "Yêu cầu đặt lại mật khẩu - Blue Moon",
+      subject: "Phản hồi về yêu cầu đặt lại mật khẩu",
       html: `
-        <h3>Xin chào cư dân,</h3>
+        <h3>Xin chào người dùng,</h3>
         <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản liên kết với email này.</p>
         <p>Vui lòng nhấn vào đường link bên dưới để đặt mật khẩu mới (Link có hiệu lực trong 15 phút):</p>
         <a href="${resetLink}" target="_blank" style="padding: 10px 20px; background-color: #2563EB; color: white; text-decoration: none; border-radius: 5px;">Đặt lại mật khẩu</a>
