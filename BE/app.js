@@ -387,14 +387,38 @@ app.post("/forgot-password", async (req, res) => {
     const apiInstance = getBrevoInstance();
 
     const sendSmtpEmail = {
-      subject: "Phản hồi yêu cầu đặt lại mật khẩu của người dùng",
-      sender: { name: "Ban quản trị chung cư Blue Moon", email: senderEmail },
+      subject: "Phản hồi yêu cầu đặt lại mật khẩu của người dùng", // Giữ nguyên theo yêu cầu
+      sender: { name: "Ban quản trị chung cư Blue Moon", email: senderEmail }, // Giữ nguyên theo yêu cầu
       to: [{ email: normalizedEmail }],
       htmlContent: `
-        <h3>Xin chào,</h3>
-        <p>Bấm vào link dưới đây để đặt lại mật khẩu (Hết hạn sau 15 phút):</p>
-        <a href="${resetLink}" target="_blank">${resetLink}</a>
-      `,
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+      <div style="background-color: #0056b3; padding: 20px; text-align: center;">
+        <h2 style="color: #ffffff; margin: 0;">Khôi phục mật khẩu</h2>
+      </div>
+      
+      <div style="padding: 20px;">
+        <p>Xin chào quý cư dân,</p>
+        
+        <p>Hệ thống đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn tại <strong>Chung cư Blue Moon</strong>.</p>
+        
+        <p>Để tiếp tục, vui lòng nhấn vào nút bên dưới để thiết lập mật khẩu mới:</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetLink}" target="_blank" style="background-color: #007bff; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Đặt lại mật khẩu ngay</a>
+        </div>
+        
+        <p style="font-style: italic; color: #dc3545;">⚠️ Lưu ý: Liên kết này sẽ hết hạn sau <strong>15 phút</strong> vì lý do bảo mật.</p>
+        
+        <p style="color: #666; font-size: 0.9em; margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px;">
+          Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email này hoặc liên hệ với ban quản trị nếu bạn nghi ngờ có truy cập trái phép.
+        </p>
+      </div>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 0.8em; color: #888;">
+        &copy; ${new Date().getFullYear()} Ban quản trị chung cư Blue Moon. All rights reserved.
+      </div>
+    </div>
+  `,
     };
 
     console.log("Đang gửi email tới Brevo...");
