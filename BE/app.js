@@ -54,47 +54,27 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d";
 
-// ================== BREVO CONFIG (FIX IMPORT VERCEL) ==================
-// Hàm này giúp lấy đúng Class TransactionalEmailsApi bất kể môi trường (Local/Vercel)
+// ================== BREVO CONFIG (CLEAN) ==================
 function getBrevoInstance() {
-  console.log("DEBUG: Bắt đầu khởi tạo Brevo...");
-
-  // 1. Kiểm tra API Key có tồn tại không
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
-    console.error(
-      "CRITICAL: Biến môi trường BREVO_API_KEY chưa được cài đặt hoặc chưa load!"
-    );
     throw new Error("Missing BREVO_API_KEY");
-  } else {
-    console.log(`DEBUG: API Key đã load (Độ dài: ${apiKey.length} ký tự)`);
   }
 
-  // 2. Xử lý Import (Fix lỗi 'is not a constructor')
-  // Trên Vercel, đôi khi library nằm trong thuộc tính .default
+  // Xử lý Import cho môi trường Vercel (CommonJS/ESM)
   let TransactionalEmailsApi = brevo.TransactionalEmailsApi;
   if (!TransactionalEmailsApi && brevo.default) {
     TransactionalEmailsApi = brevo.default.TransactionalEmailsApi;
-    console.log("DEBUG: Đã tìm thấy Class trong brevo.default");
   }
 
   if (!TransactionalEmailsApi) {
-    console.error(
-      "CRITICAL: Không tìm thấy class TransactionalEmailsApi. Cấu trúc module:",
-      Object.keys(brevo)
-    );
     throw new Error("Lỗi thư viện Brevo: Class not found");
   }
 
   const apiInstance = new TransactionalEmailsApi();
 
-  // 3. Cấu hình Key (Dùng số 0 cho API Key V3)
-  try {
-    apiInstance.setApiKey(0, apiKey);
-    console.log("DEBUG: Set API Key thành công.");
-  } catch (e) {
-    console.error("DEBUG: Lỗi khi setApiKey:", e.message);
-  }
+  // Cấu hình Key (0 là identifier cho API Key)
+  apiInstance.setApiKey(0, apiKey);
 
   return apiInstance;
 }
@@ -355,7 +335,6 @@ app.delete("/residents/:id", async (req, res) => {
 // ====================================================
 
 app.post("/forgot-password", async (req, res) => {
-  console.log("--- BẮT ĐẦU REQUEST FORGOT PASSWORD ---");
   const { email } = req.body;
 
   if (!email) {
@@ -364,16 +343,13 @@ app.post("/forgot-password", async (req, res) => {
 
   try {
     const normalizedEmail = email.trim().toLowerCase();
-    console.log("Tìm kiếm email:", normalizedEmail);
-
     const userId = await kv.get(`login:email:${normalizedEmail}`);
+
     if (!userId) {
-      console.log("Email không tồn tại trong DB.");
       return res
         .status(404)
         .json({ error: "Email không tồn tại trong hệ thống" });
     }
-    console.log("User ID:", userId);
 
     const resetToken = crypto.randomBytes(20).toString("hex");
     await kv.set(`reset_token:${resetToken}`, userId, { ex: 900 });
@@ -387,8 +363,8 @@ app.post("/forgot-password", async (req, res) => {
     const apiInstance = getBrevoInstance();
 
     const sendSmtpEmail = {
-      subject: "Phản hồi yêu cầu đặt lại mật khẩu của người dùng", // Giữ nguyên theo yêu cầu
-      sender: { name: "Ban quản trị chung cư Blue Moon", email: senderEmail }, // Giữ nguyên theo yêu cầu
+      subject: "Phản hồi yêu cầu đặt lại mật khẩu của người dùng",
+      sender: { name: "Ban quản trị chung cư Blue Moon", email: senderEmail },
       to: [{ email: normalizedEmail }],
       htmlContent: `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
@@ -421,42 +397,12 @@ app.post("/forgot-password", async (req, res) => {
   `,
     };
 
-    console.log("Đang gửi email tới Brevo...");
     const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log("Gửi thành công! Message ID:", data.messageId);
-
     res.json({ message: "Email sent success", messageId: data.messageId });
   } catch (err) {
-    console.error("!!! LỖI GỬI EMAIL !!!");
-    console.error("Error Message:", err.message);
-
-    // LOG CHI TIẾT ĐỂ BẮT LỖI UNDEFINED
-    if (err.response) {
-      console.error("HTTP Status Code:", err.response.statusCode);
-
-      // Log body nếu có
-      if (err.response.body) {
-        console.error(
-          "Response Body (JSON):",
-          JSON.stringify(err.response.body, null, 2)
-        );
-      } else {
-        console.error("Response Body is undefined.");
-        // Thử log response.text nếu body không parse được
-        if (err.response.text)
-          console.error("Response Text:", err.response.text);
-      }
-    } else {
-      // Lỗi không phải do phản hồi HTTP (VD: Lỗi import, lỗi mạng)
-      console.error(
-        "Full Error Object:",
-        JSON.stringify(err, Object.getOwnPropertyNames(err))
-      );
-    }
-
+    console.error("Forgot Password Error:", err.message);
     res.status(500).json({
-      error: "Gửi email thất bại",
-      detail: err.message,
+      error: "Lỗi hệ thống khi gửi email: " + err.message,
     });
   }
 });
