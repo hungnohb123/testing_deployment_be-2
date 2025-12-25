@@ -397,7 +397,7 @@ app.post("/forgot-password", async (req, res) => {
       </div>
       
       <div style="padding: 20px;">
-        <p>Xin chào quý cư dân,</p>
+        <p>Xin chào người dùng,</p>
         
         <p>Hệ thống đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn tại <strong>Chung cư Blue Moon</strong>.</p>
         
