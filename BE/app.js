@@ -387,8 +387,8 @@ app.post("/forgot-password", async (req, res) => {
     const apiInstance = getBrevoInstance();
 
     const sendSmtpEmail = {
-      subject: "Yêu cầu đặt lại mật khẩu - Blue Moon",
-      sender: { name: "Ban Quan Tri Blue Moon", email: senderEmail },
+      subject: "Phản hồi yêu cầu đặt lại mật khẩu của người dùng",
+      sender: { name: "Ban quản trị chung cư Blue Moon", email: senderEmail },
       to: [{ email: normalizedEmail }],
       htmlContent: `
         <h3>Xin chào,</h3>
