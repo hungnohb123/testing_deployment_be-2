@@ -55,16 +55,21 @@ const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d";
 
 // ================== BREVO CONFIG (FIX CHO V3.0.1) ==================
-// Ở bản v3, không còn dùng ApiClient.instance (Singleton) nữa.
-// Ta khởi tạo instance và setApiKey trực tiếp cho instance đó.
-
+// Khởi tạo instance cho API gửi mail
 const apiInstance = new brevo.TransactionalEmailsApi();
 
+// Cấu hình API Key.
+// Lưu ý: Trong SDK v3, setApiKey tham số đầu tiên là enum hoặc số thứ tự của key.
+// brevo.TransactionalEmailsApiApiKeys.apiKey thường tương ứng với giá trị 0.
 if (process.env.BREVO_API_KEY) {
-  apiInstance.setApiKey(
-    brevo.TransactionalEmailsApiApiKeys.apiKey,
-    process.env.BREVO_API_KEY
-  );
+  try {
+    apiInstance.setApiKey(
+      brevo.TransactionalEmailsApiApiKeys.apiKey,
+      process.env.BREVO_API_KEY
+    );
+  } catch (e) {
+    console.error("Lỗi cấu hình Brevo Key:", e);
+  }
 } else {
   console.warn("CẢNH BÁO: Chưa tìm thấy biến môi trường BREVO_API_KEY");
 }
@@ -348,37 +353,42 @@ app.post("/forgot-password", async (req, res) => {
       req.get("origin") || "https://it-3180-2025-1-se-08.vercel.app";
     const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    const senderEmail = process.env.EMAIL_USER;
+    const senderEmail = process.env.EMAIL_USER || "no-reply@bluemoon.com";
 
-    // --- LOGIC GỬI EMAIL BẰNG BREVO ---
-    const sendSmtpEmail = new brevo.SendSmtpEmail();
-
-    sendSmtpEmail.subject = "Yêu cầu đặt lại mật khẩu - Blue Moon";
-    sendSmtpEmail.sender = {
-      name: "Ban Quan Tri Blue Moon",
-      email: senderEmail,
-    };
-    sendSmtpEmail.to = [{ email: normalizedEmail }];
-    sendSmtpEmail.htmlContent = `
+    // --- FIX QUAN TRỌNG CHO BREVO V3 ---
+    // Thay vì dùng new brevo.SendSmtpEmail(), ta dùng Object thuần.
+    // Điều này tránh lỗi "is not a constructor" trong môi trường CommonJS/Node.
+    const sendSmtpEmail = {
+      subject: "Yêu cầu đặt lại mật khẩu - Blue Moon",
+      sender: {
+        name: "Ban Quan Tri Blue Moon",
+        email: senderEmail,
+      },
+      to: [{ email: normalizedEmail }],
+      htmlContent: `
         <h3>Xin chào người dùng,</h3>
         <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản liên kết với email này.</p>
         <p>Vui lòng nhấn vào đường link bên dưới để đặt mật khẩu mới (Link có hiệu lực trong 15 phút):</p>
         <a href="${resetLink}" target="_blank" style="padding: 10px 20px; background-color: #2563EB; color: white; text-decoration: none; border-radius: 5px;">Đặt lại mật khẩu</a>
         <p>Nếu bạn không yêu cầu, vui lòng bỏ qua email này.</p>
         <p>Trân trọng,<br>Ban quản trị Blue Moon</p>
-    `;
+      `,
+    };
 
+    // Gọi API gửi mail
     const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
     console.log("Brevo Email sent successfully. MsgId:", data.messageId);
 
     res.json({ message: "Email sent success", messageId: data.messageId });
   } catch (err) {
     console.error("Forgot Password Error:", err);
-    // Log lỗi chi tiết từ Brevo nếu có
-    if (err.response && err.response.body) {
-      console.error("Brevo API Error Body:", err.response.body);
+    // Log chi tiết body lỗi từ Brevo để debug
+    if (err.body) {
+      console.error("Brevo Error Body:", JSON.stringify(err.body, null, 2));
     }
-    res.status(500).json({ error: "Lỗi hệ thống: " + err.message });
+    res.status(500).json({
+      error: "Lỗi hệ thống khi gửi email: " + err.message,
+    });
   }
 });
 
