@@ -54,13 +54,20 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d";
 
-// ================== BREVO CONFIG (MỚI) ==================
-const defaultClient = brevo.ApiClient.instance;
-// Cấu hình xác thực API Key
-const apiKey = defaultClient.authentications["api-key"];
-apiKey.apiKey = process.env.BREVO_API_KEY;
+// ================== BREVO CONFIG (FIX CHO V3.0.1) ==================
+// Ở bản v3, không còn dùng ApiClient.instance (Singleton) nữa.
+// Ta khởi tạo instance và setApiKey trực tiếp cho instance đó.
 
 const apiInstance = new brevo.TransactionalEmailsApi();
+
+if (process.env.BREVO_API_KEY) {
+  apiInstance.setApiKey(
+    brevo.TransactionalEmailsApiApiKeys.apiKey,
+    process.env.BREVO_API_KEY
+  );
+} else {
+  console.warn("CẢNH BÁO: Chưa tìm thấy biến môi trường BREVO_API_KEY");
+}
 
 // ================== HELPER: ID & KEY ==================
 
