@@ -1,5 +1,5 @@
 // app.js
-// Backend dùng Express + Vercel KV + Resend SDK
+// Backend dùng Express + Vercel KV + Brevo SDK
 // Database: Vercel KV (Upstash Redis – NoSQL, key-value)
 
 const dayjs = require("dayjs");
@@ -10,7 +10,8 @@ dayjs.extend(timezone);
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
-const { Resend } = require("resend");
+// --- THAY ĐỔI: Dùng Brevo SDK ---
+const brevo = require("@getbrevo/brevo");
 const crypto = require("crypto");
 
 const app = express();
@@ -53,8 +54,13 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d";
 
-// ================== RESEND CONFIG ==================
-const resend = new Resend(process.env.RESEND_API_KEY);
+// ================== BREVO CONFIG (MỚI) ==================
+const defaultClient = brevo.ApiClient.instance;
+// Cấu hình xác thực API Key
+const apiKey = defaultClient.authentications["api-key"];
+apiKey.apiKey = process.env.BREVO_API_KEY;
+
+const apiInstance = new brevo.TransactionalEmailsApi();
 
 // ================== HELPER: ID & KEY ==================
 
@@ -85,7 +91,7 @@ function formKey(id) {
 
 // ================== ROOT & HEALTH ==================
 app.get("/", (req, res) => {
-  res.send("Hello Express + Vercel KV + Resend!");
+  res.send("Hello Express + Vercel KV + Brevo!");
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
@@ -337,29 +343,34 @@ app.post("/forgot-password", async (req, res) => {
 
     const senderEmail = process.env.EMAIL_USER;
 
-    const { data, error } = await resend.emails.send({
-      from: `Ban Quan Tri Blue Moon <${senderEmail}>`,
-      to: [normalizedEmail],
-      subject: "Yêu cầu đặt lại mật khẩu - Blue Moon",
-      html: `
+    // --- LOGIC GỬI EMAIL BẰNG BREVO ---
+    const sendSmtpEmail = new brevo.SendSmtpEmail();
+
+    sendSmtpEmail.subject = "Yêu cầu đặt lại mật khẩu - Blue Moon";
+    sendSmtpEmail.sender = {
+      name: "Ban Quan Tri Blue Moon",
+      email: senderEmail,
+    };
+    sendSmtpEmail.to = [{ email: normalizedEmail }];
+    sendSmtpEmail.htmlContent = `
         <h3>Xin chào người dùng,</h3>
         <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản liên kết với email này.</p>
         <p>Vui lòng nhấn vào đường link bên dưới để đặt mật khẩu mới (Link có hiệu lực trong 15 phút):</p>
         <a href="${resetLink}" target="_blank" style="padding: 10px 20px; background-color: #2563EB; color: white; text-decoration: none; border-radius: 5px;">Đặt lại mật khẩu</a>
         <p>Nếu bạn không yêu cầu, vui lòng bỏ qua email này.</p>
         <p>Trân trọng,<br>Ban quản trị Blue Moon</p>
-      `,
-    });
+    `;
 
-    if (error) {
-      console.error("Resend Error:", error);
-      return res.status(500).json({ error: "Lỗi gửi email: " + error.message });
-    }
+    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log("Brevo Email sent successfully. MsgId:", data.messageId);
 
-    console.log("Email sent successfully:", data);
-    res.json({ message: "Email sent success", data });
+    res.json({ message: "Email sent success", messageId: data.messageId });
   } catch (err) {
     console.error("Forgot Password Error:", err);
+    // Log lỗi chi tiết từ Brevo nếu có
+    if (err.response && err.response.body) {
+      console.error("Brevo API Error Body:", err.response.body);
+    }
     res.status(500).json({ error: "Lỗi hệ thống: " + err.message });
   }
 });
@@ -401,7 +412,7 @@ app.post("/reset-password", async (req, res) => {
 });
 
 // ====================================================
-// ====================== LOGIN (ĐÃ FIX LỖI) ==========
+// ====================== LOGIN =======================
 // ====================================================
 
 app.post("/login", loginLimiter, async (req, res) => {
@@ -416,10 +427,10 @@ app.post("/login", loginLimiter, async (req, res) => {
     const normalizedUsername = cleanUsername.toLowerCase();
     let id = null;
 
-    // 1. Tìm theo Email chuẩn (lowercase) - Dành cho user mới hoặc đã update
+    // 1. Tìm theo Email chuẩn (lowercase)
     id = await kv.get(`login:email:${normalizedUsername}`);
 
-    // 2. Nếu không thấy, tìm theo Email gốc (legacy) - Dành cho user cũ chưa update
+    // 2. Nếu không thấy, tìm theo Email gốc (legacy)
     if (!id) {
       id = await kv.get(`login:email:${cleanUsername}`);
     }
