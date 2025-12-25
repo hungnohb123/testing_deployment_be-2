@@ -53,13 +53,28 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d"; // hoặc "1d"
 
-// ================== NODEMAILER CONFIG (MỚI) ==================
+// ================== NODEMAILER CONFIG (CẬP NHẬT TỐI ƯU) ==================
 const transporter = nodemailer.createTransport({
   service: "gmail",
+  host: "smtp.gmail.com", // Khai báo host rõ ràng
+  port: 465, // Port SSL chuẩn của Gmail
+  secure: true, // Dùng SSL
   auth: {
-    user: process.env.EMAIL_USER, // Cấu hình trong Environment Variables trên Vercel
-    pass: process.env.EMAIL_PASS, // App Password 16 ký tự
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
+  tls: {
+    rejectUnauthorized: false, // Bỏ qua lỗi certificate nếu có (quan trọng trên Vercel)
+  },
+});
+
+// Kiểm tra kết nối khi khởi động (Optional - để debug log)
+transporter.verify(function (error, success) {
+  if (error) {
+    console.log("Transporter Error:", error);
+  } else {
+    console.log("Server is ready to take our messages");
+  }
 });
 
 // ================== HELPER: ID & KEY ==================
@@ -364,12 +379,20 @@ app.post("/forgot-password", async (req, res) => {
       `,
     };
 
-    await transporter.sendMail(mailOptions);
+    // Chờ gửi xong mới trả response (Blocking để đảm bảo serverless không kill process)
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Message sent: %s", info.messageId);
 
-    res.json({ message: "Email sent success" });
+    res.json({ message: "Email sent success", messageId: info.messageId });
   } catch (err) {
     console.error("Forgot Password Error:", err);
-    res.status(500).json({ error: "Lỗi hệ thống khi gửi email" });
+    // Log chi tiết lỗi gửi mail nếu có
+    if (err.response) {
+      console.error("SMTP Response:", err.response);
+    }
+    res
+      .status(500)
+      .json({ error: "Lỗi hệ thống khi gửi email: " + err.message });
   }
 });
 
