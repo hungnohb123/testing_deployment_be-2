@@ -10,7 +10,6 @@ dayjs.extend(timezone);
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
-// --- THAY ĐỔI: Dùng Resend thay vì Nodemailer ---
 const { Resend } = require("resend");
 const crypto = require("crypto");
 
@@ -54,8 +53,7 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d";
 
-// ================== RESEND CONFIG (MỚI) ==================
-// Khởi tạo Resend với API Key từ biến môi trường
+// ================== RESEND CONFIG ==================
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ================== HELPER: ID & KEY ==================
@@ -186,7 +184,6 @@ app.post("/residents", async (req, res) => {
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Chuẩn hóa email về lowercase để tránh lỗi tìm kiếm
     const normalizedEmail = email ? email.trim().toLowerCase() : null;
 
     const user = {
@@ -265,7 +262,6 @@ app.put("/residents/:id", async (req, res) => {
     if (residency_status !== undefined && residency_status !== null)
       updated.residency_status = residency_status;
 
-    // Chuẩn hóa email update
     if (email !== undefined && email !== null)
       updated.email = email.trim().toLowerCase();
 
@@ -315,7 +311,6 @@ app.delete("/residents/:id", async (req, res) => {
 // ============= AUTHENTICATION & PASSWORD ============
 // ====================================================
 
-// API 1: Yêu cầu lấy lại mật khẩu (Dùng Resend)
 app.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
 
@@ -324,7 +319,6 @@ app.post("/forgot-password", async (req, res) => {
   }
 
   try {
-    // 1. Tìm user theo email (Chuẩn hóa lowercase)
     const normalizedEmail = email.trim().toLowerCase();
     const userId = await kv.get(`login:email:${normalizedEmail}`);
 
@@ -334,24 +328,18 @@ app.post("/forgot-password", async (req, res) => {
         .json({ error: "Email không tồn tại trong hệ thống" });
     }
 
-    // 2. Tạo token
     const resetToken = crypto.randomBytes(20).toString("hex");
-
-    // 3. Lưu Redis
     await kv.set(`reset_token:${resetToken}`, userId, { ex: 900 });
 
-    // 4. Link reset
     const frontendUrl =
       req.get("origin") || "https://it-3180-2025-1-se-08.vercel.app";
     const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    // 5. Gửi email bằng Resend
-    // Lưu ý: Trường 'from' phải là email bạn đã Verify trong Resend Dashboard (Single Sender)
-    const senderEmail = process.env.EMAIL_USER; // Ví dụ: bqt.bluemoon@gmail.com
+    const senderEmail = process.env.EMAIL_USER;
 
     const { data, error } = await resend.emails.send({
       from: `Ban Quan Tri Blue Moon <${senderEmail}>`,
-      to: [normalizedEmail], // Gửi đến email người dùng
+      to: [normalizedEmail],
       subject: "Yêu cầu đặt lại mật khẩu - Blue Moon",
       html: `
         <h3>Xin chào người dùng,</h3>
@@ -376,7 +364,6 @@ app.post("/forgot-password", async (req, res) => {
   }
 });
 
-// API 2: Thực hiện đổi mật khẩu (Reset Password)
 app.post("/reset-password", async (req, res) => {
   const { token, new_password } = req.body;
 
@@ -385,33 +372,25 @@ app.post("/reset-password", async (req, res) => {
   }
 
   try {
-    // 1. Kiểm tra token trong Redis
     const userId = await kv.get(`reset_token:${token}`);
-
     if (!userId) {
       return res
         .status(400)
         .json({ error: "Liên kết không hợp lệ hoặc đã hết hạn" });
     }
 
-    // 2. Lấy thông tin user
     const userKey = residentKey(userId);
     const user = await kv.get(userKey);
-
     if (!user) {
       return res.status(404).json({ error: "Người dùng không tồn tại" });
     }
 
-    // 3. Mã hóa mật khẩu mới
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(new_password, saltRounds);
 
-    // 4. Cập nhật user
     user.password = hashedPassword;
     user.updated_at = new Date().toISOString();
     await kv.set(userKey, user);
-
-    // 5. Xóa token để không dùng lại được
     await kv.del(`reset_token:${token}`);
 
     res.json({ message: "Đổi mật khẩu thành công" });
@@ -422,7 +401,7 @@ app.post("/reset-password", async (req, res) => {
 });
 
 // ====================================================
-// ====================== LOGIN =======================
+// ====================== LOGIN (ĐÃ FIX LỖI) ==========
 // ====================================================
 
 app.post("/login", loginLimiter, async (req, res) => {
@@ -433,14 +412,21 @@ app.post("/login", loginLimiter, async (req, res) => {
   }
 
   try {
-    // Chuẩn hóa input đăng nhập
-    const normalizedUsername = username.trim().toLowerCase();
+    const cleanUsername = username.trim();
+    const normalizedUsername = cleanUsername.toLowerCase();
+    let id = null;
 
-    // Tìm kiếm (Ưu tiên tìm email trước)
-    let id = await kv.get(`login:email:${normalizedUsername}`);
+    // 1. Tìm theo Email chuẩn (lowercase) - Dành cho user mới hoặc đã update
+    id = await kv.get(`login:email:${normalizedUsername}`);
+
+    // 2. Nếu không thấy, tìm theo Email gốc (legacy) - Dành cho user cũ chưa update
     if (!id) {
-      // Nếu không thấy email, thử tìm theo phone (phone không cần lowercase nhưng cần trim)
-      id = await kv.get(`login:phone:${username.trim()}`);
+      id = await kv.get(`login:email:${cleanUsername}`);
+    }
+
+    // 3. Nếu vẫn không thấy, tìm theo Phone
+    if (!id) {
+      id = await kv.get(`login:phone:${cleanUsername}`);
     }
 
     if (!id) {
