@@ -54,24 +54,37 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d";
 
-// ================== BREVO CONFIG (FIX CHO V3.0.1) ==================
-// Khởi tạo instance cho API gửi mail
-const apiInstance = new brevo.TransactionalEmailsApi();
+// ================== BREVO CONFIG (FIX DEBUG V3) ==================
+// Hàm helper để khởi tạo Brevo an toàn (tránh lỗi crash global)
+function getBrevoInstance() {
+  console.log("DEBUG: Đang khởi tạo Brevo Instance...");
 
-// Cấu hình API Key.
-// Lưu ý: Trong SDK v3, setApiKey tham số đầu tiên là enum hoặc số thứ tự của key.
-// brevo.TransactionalEmailsApiApiKeys.apiKey thường tương ứng với giá trị 0.
-if (process.env.BREVO_API_KEY) {
-  try {
-    apiInstance.setApiKey(
-      brevo.TransactionalEmailsApiApiKeys.apiKey,
-      process.env.BREVO_API_KEY
+  // 1. Kiểm tra xem thư viện import có đúng class không
+  // Xử lý trường hợp CommonJS vs ES Module trên Vercel
+  const TransactionalEmailsApi =
+    brevo.TransactionalEmailsApi ||
+    (brevo.default && brevo.default.TransactionalEmailsApi);
+
+  if (!TransactionalEmailsApi) {
+    console.error(
+      "CRITICAL ERROR: Không tìm thấy class TransactionalEmailsApi trong module @getbrevo/brevo"
     );
-  } catch (e) {
-    console.error("Lỗi cấu hình Brevo Key:", e);
+    console.error("Dump module brevo:", JSON.stringify(brevo));
+    throw new Error("Lỗi import thư viện Brevo SDK - Class not found");
   }
-} else {
-  console.warn("CẢNH BÁO: Chưa tìm thấy biến môi trường BREVO_API_KEY");
+
+  const apiInstance = new TransactionalEmailsApi();
+
+  // 2. Cấu hình API Key
+  const apiKey = process.env.BREVO_API_KEY;
+  if (apiKey) {
+    // Trong SDK v3, tham số đầu tiên là 0 (hoặc enum API Key)
+    apiInstance.setApiKey(0, apiKey);
+  } else {
+    console.warn("WARNING: Biến môi trường BREVO_API_KEY đang trống!");
+  }
+
+  return apiInstance;
 }
 
 // ================== HELPER: ID & KEY ==================
@@ -330,6 +343,7 @@ app.delete("/residents/:id", async (req, res) => {
 // ====================================================
 
 app.post("/forgot-password", async (req, res) => {
+  console.log("--- START FORGOT PASSWORD ---");
   const { email } = req.body;
 
   if (!email) {
@@ -338,7 +352,10 @@ app.post("/forgot-password", async (req, res) => {
 
   try {
     const normalizedEmail = email.trim().toLowerCase();
+    console.log("DEBUG: Checking email:", normalizedEmail);
+
     const userId = await kv.get(`login:email:${normalizedEmail}`);
+    console.log("DEBUG: UserID found:", userId);
 
     if (!userId) {
       return res
@@ -355,9 +372,11 @@ app.post("/forgot-password", async (req, res) => {
 
     const senderEmail = process.env.EMAIL_USER || "no-reply@bluemoon.com";
 
-    // --- FIX QUAN TRỌNG CHO BREVO V3 ---
-    // Thay vì dùng new brevo.SendSmtpEmail(), ta dùng Object thuần.
-    // Điều này tránh lỗi "is not a constructor" trong môi trường CommonJS/Node.
+    // --- LOGIC BREVO VỚI DEBUG ---
+    // 1. Khởi tạo instance
+    const apiInstance = getBrevoInstance();
+
+    // 2. Tạo object email
     const sendSmtpEmail = {
       subject: "Yêu cầu đặt lại mật khẩu - Blue Moon",
       sender: {
@@ -375,19 +394,37 @@ app.post("/forgot-password", async (req, res) => {
       `,
     };
 
-    // Gọi API gửi mail
+    console.log(
+      "DEBUG: Sending payload to Brevo...",
+      JSON.stringify(sendSmtpEmail)
+    );
+
+    // 3. Gọi API
     const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log("Brevo Email sent successfully. MsgId:", data.messageId);
+    console.log("SUCCESS: Email sent. MsgId:", data.messageId);
 
     res.json({ message: "Email sent success", messageId: data.messageId });
   } catch (err) {
-    console.error("Forgot Password Error:", err);
+    console.error("!!! ERROR FORGOT PASSWORD !!!");
+    console.error("Error Message:", err.message);
+
     // Log chi tiết body lỗi từ Brevo để debug
     if (err.body) {
       console.error("Brevo Error Body:", JSON.stringify(err.body, null, 2));
     }
+    if (err.response) {
+      console.error("Brevo Response Status:", err.response.statusCode);
+      console.error(
+        "Brevo Response Body:",
+        JSON.stringify(err.response.body, null, 2)
+      );
+    }
+
+    // Trả về lỗi chi tiết cho frontend (giúp bạn thấy lỗi ngay trên browser console)
+    const detailError = err.body ? JSON.stringify(err.body) : err.message;
     res.status(500).json({
-      error: "Lỗi hệ thống khi gửi email: " + err.message,
+      error: "Lỗi hệ thống khi gửi email",
+      detail: detailError,
     });
   }
 });
