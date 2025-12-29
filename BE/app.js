@@ -10,13 +10,12 @@ dayjs.extend(timezone);
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
-// --- THAY ĐỔI: Dùng Brevo SDK ---
 const brevo = require("@getbrevo/brevo");
 const crypto = require("crypto");
 
 const app = express();
 
-app.set("trust proxy", 1); // Lấy IP người dùng thật thay vì IP Vercel
+app.set("trust proxy", 1);
 
 // ================== CORS ==================
 const allowedOrigins = [
@@ -33,13 +32,13 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // Preflight cho mọi route
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 // ================== RATE LIMITING ==================
 const loginLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 phút
-  max: 6, // tối đa 6 lần
+  windowMs: 60 * 1000,
+  max: 6,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Đăng nhập quá nhiều lần. Vui lòng thử lại sau 1 phút" },
@@ -54,14 +53,13 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 const JWT_EXPIRES_IN = "7d";
 
-// ================== BREVO CONFIG (CLEAN) ==================
+// ================== BREVO CONFIG ==================
 function getBrevoInstance() {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
     throw new Error("Missing BREVO_API_KEY");
   }
 
-  // Xử lý Import cho môi trường Vercel (CommonJS/ESM)
   let TransactionalEmailsApi = brevo.TransactionalEmailsApi;
   if (!TransactionalEmailsApi && brevo.default) {
     TransactionalEmailsApi = brevo.default.TransactionalEmailsApi;
@@ -72,10 +70,7 @@ function getBrevoInstance() {
   }
 
   const apiInstance = new TransactionalEmailsApi();
-
-  // Cấu hình Key (0 là identifier cho API Key)
   apiInstance.setApiKey(0, apiKey);
-
   return apiInstance;
 }
 
@@ -118,7 +113,6 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 // ====================================================
 
 async function updateResidentIndexes(oldUser, newUser) {
-  // Login email
   if (oldUser?.email && oldUser.email !== newUser.email) {
     await kv.del(`login:email:${oldUser.email}`);
   }
@@ -126,7 +120,6 @@ async function updateResidentIndexes(oldUser, newUser) {
     await kv.set(`login:email:${newUser.email}`, newUser.id);
   }
 
-  // Login phone
   if (oldUser?.phone && oldUser.phone !== newUser.phone) {
     await kv.del(`login:phone:${oldUser.phone}`);
   }
@@ -134,7 +127,6 @@ async function updateResidentIndexes(oldUser, newUser) {
     await kv.set(`login:phone:${newUser.phone}`, newUser.id);
   }
 
-  // Index chủ hộ
   const oldIsOwner =
     oldUser &&
     oldUser.residency_status &&
@@ -359,7 +351,6 @@ app.post("/forgot-password", async (req, res) => {
     const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
     const senderEmail = process.env.EMAIL_USER || "no-reply@bluemoon.com";
 
-    // --- KHỞI TẠO BREVO ---
     const apiInstance = getBrevoInstance();
 
     const sendSmtpEmail = {
@@ -820,6 +811,7 @@ app.delete("/payments/:id", async (req, res) => {
 
 // ================== NOTIFICATIONS ===================
 app.get("/notifications", async (req, res) => {
+  const { sender_name, receiver_name } = req.query; // Lấy query params
   try {
     const ids = await kv.zrange("notifications:all", 0, -1, { rev: true });
     const notis = await Promise.all(
@@ -829,6 +821,21 @@ app.get("/notifications", async (req, res) => {
     const results = [];
     for (const n of notis) {
       if (!n) continue;
+
+      // Logic lọc (Filter)
+      if (sender_name && n.sender_name) {
+        if (!n.sender_name.toLowerCase().includes(sender_name.toLowerCase())) {
+          continue; // Bỏ qua nếu không khớp người gửi
+        }
+      }
+      if (receiver_name && n.receiver_name) {
+        if (
+          !n.receiver_name.toLowerCase().includes(receiver_name.toLowerCase())
+        ) {
+          continue; // Bỏ qua nếu không khớp người nhận
+        }
+      }
+
       let owner_name = null;
       if (n.apartment_id) {
         const ownerId = await kv.get(
@@ -848,7 +855,7 @@ app.get("/notifications", async (req, res) => {
 });
 
 app.post("/notifications", async (req, res) => {
-  const { apartment_id, content } = req.body || {};
+  const { apartment_id, content, sender_name, receiver_name } = req.body || {}; // Nhận thêm trường
   if (!apartment_id || !content) {
     return res.status(400).json({ error: "Thiếu apartment_id hoặc content" });
   }
@@ -859,6 +866,8 @@ app.post("/notifications", async (req, res) => {
       id,
       apartment_id,
       content,
+      sender_name: sender_name || "Ban Quản Trị", // Mặc định nếu thiếu
+      receiver_name: receiver_name || null,
       notification_date: nowIso,
       sent_date: null,
     };
@@ -890,8 +899,14 @@ app.patch("/notifications/:id/send", async (req, res) => {
 
 app.put("/notifications/:id", async (req, res) => {
   const { id } = req.params;
-  const { apartment_id, content, notification_date, sent_date } =
-    req.body || {};
+  const {
+    apartment_id,
+    content,
+    notification_date,
+    sent_date,
+    sender_name,
+    receiver_name,
+  } = req.body || {}; // Thêm
 
   if (!id) return res.status(400).json({ error: "Thiếu id thông báo" });
   try {
@@ -919,6 +934,10 @@ app.put("/notifications/:id", async (req, res) => {
     if (notification_date !== undefined)
       update.notification_date = notification_date || null;
     if (sent_date !== undefined) update.sent_date = sent_date || null;
+
+    // Cập nhật thêm
+    if (sender_name !== undefined) update.sender_name = sender_name;
+    if (receiver_name !== undefined) update.receiver_name = receiver_name;
 
     await kv.set(notificationKey(id), update);
     res.json({ message: "Cập nhật thông báo thành công" });
