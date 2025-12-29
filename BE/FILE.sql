@@ -88,6 +88,11 @@ CREATE TABLE notifications (
   id                INT AUTO_INCREMENT PRIMARY KEY,
   notification_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   sent_date         DATETIME DEFAULT NULL,
+  
+  -- [THÊM MỚI] Thêm trực tiếp vào bảng
+  sender_name       VARCHAR(100) DEFAULT NULL,
+  receiver_name     VARCHAR(100) DEFAULT NULL,
+  
   apartment_id      VARCHAR(20) NOT NULL,
   content           TEXT NOT NULL
 )
@@ -227,13 +232,13 @@ SET state = 1,
     payment_date = CURRENT_DATE()
 WHERE transaction_ref = 'TRX20251024-0001';
 
--- 2. Thêm 1 vài notifications mẫu
-INSERT INTO notifications (notification_date, sent_date, apartment_id, content) VALUES
-  (NOW(), NULL, 'A1-101', 'Ban quản lý thông báo: Căn hộ A1-101 sẽ tạm ngắt điện từ 9h đến 11h sáng ngày 26/10 để bảo trì hệ thống điện tầng 1.'),
-  (NOW(), NULL, 'B2-202', 'Ban quản lý thông báo: Phí dịch vụ tháng 10 của căn hộ B2-202 là 250.000đ. Vui lòng thanh toán trước ngày 30/10.'),
-  (NOW(), NULL, 'C3-303', 'Thông báo: Hệ thống nước tại tầng 3 sẽ bị gián đoạn từ 14h đến 17h ngày 25/10 để khắc phục rò rỉ.'),
-  (NOW(), NULL, 'D4-404', 'Ban quản lý thông báo: Ngày 27/10 sẽ diễn ra kiểm tra hệ thống PCCC. Cư dân căn hộ D4-404 vui lòng có mặt để phối hợp.'),
-  (NOW(), NULL, 'E5-505', 'Ban quản lý tòa nhà: Vui lòng đeo thẻ cư dân khi ra vào tòa nhà để đảm bảo an ninh.');
+-- 2. Thêm 1 vài notifications mẫu (ĐÃ CẬP NHẬT DỮ LIỆU CHO 2 CỘT MỚI)
+INSERT INTO notifications (notification_date, sent_date, apartment_id, content, sender_name, receiver_name) VALUES
+  (NOW(), NULL, 'A1-101', 'Ban quản lý thông báo: Căn hộ A1-101 sẽ tạm ngắt điện từ 9h đến 11h sáng ngày 26/10 để bảo trì hệ thống điện tầng 1.', 'Ban Quản Lý', 'Nguyễn Văn A'),
+  (NOW(), NULL, 'B2-202', 'Ban quản lý thông báo: Phí dịch vụ tháng 10 của căn hộ B2-202 là 250.000đ. Vui lòng thanh toán trước ngày 30/10.', 'Phòng Kế Toán', 'Trần Thị B'),
+  (NOW(), NULL, 'C3-303', 'Thông báo: Hệ thống nước tại tầng 3 sẽ bị gián đoạn từ 14h đến 17h ngày 25/10 để khắc phục rò rỉ.', 'Ban Kỹ Thuật', 'Cư Dân Tầng 3'),
+  (NOW(), NULL, 'D4-404', 'Ban quản lý thông báo: Ngày 27/10 sẽ diễn ra kiểm tra hệ thống PCCC. Cư dân căn hộ D4-404 vui lòng có mặt để phối hợp.', 'Ban An Ninh', 'Lê Văn C'),
+  (NOW(), NULL, 'E5-505', 'Ban quản lý tòa nhà: Vui lòng đeo thẻ cư dân khi ra vào tòa nhà để đảm bảo an ninh.', 'Ban Quản Trị', NULL);
 
 -- 3. (Tuỳ chọn) Thêm 1 service mẫu để test API /services
 
