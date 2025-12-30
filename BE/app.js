@@ -1011,12 +1011,12 @@ app.post("/services", async (req, res) => {
         ? servicestatus
         : "Đã ghi nhận";
 
-    const problemsValue = problems || "Ko vấn đề";
+    const problemsValue = problems || "Chưa có phản hồi của cư dân";
     if (!PROBLEMS.includes(problemsValue)) {
       return res.status(400).json({ error: `problems không hợp lệ` });
     }
 
-    const ratesValue = rates || "Chất lượng ổn";
+    const ratesValue = rates || "Chưa có đánh giá của cư dân";
     if (!RATES.includes(ratesValue)) {
       return res.status(400).json({ error: `rates không hợp lệ` });
     }
