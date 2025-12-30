@@ -1011,12 +1011,12 @@ app.post("/services", async (req, res) => {
         ? servicestatus
         : "Đã ghi nhận";
 
-    const problemsValue = problems || "Ko vấn đề";
+    const problemsValue = problems;
     if (!PROBLEMS.includes(problemsValue)) {
       return res.status(400).json({ error: `problems không hợp lệ` });
     }
 
-    const ratesValue = rates || "Chất lượng ổn";
+    const ratesValue = rates;
     if (!RATES.includes(ratesValue)) {
       return res.status(400).json({ error: `rates không hợp lệ` });
     }
@@ -1034,8 +1034,8 @@ app.post("/services", async (req, res) => {
       servicestatus: serviceStatusValue,
       handle_date: nowIso,
       note: note || null,
-      problems: problemsValue,
-      rates: ratesValue,
+      problems: problemsValue || null,
+      rates: ratesValue || null,
       scripts: scripts || null,
       created_at: nowIso,
       updated_at: nowIso,
