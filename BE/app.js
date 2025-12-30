@@ -1013,12 +1013,13 @@ app.post("/services", async (req, res) => {
         ? servicestatus
         : "Đã ghi nhận";
 
-    const problemsValue = problems;
+    const problemsValue =
+      problems && PROBLEMS.includes(problems) ? problems : null;
     if (!PROBLEMS.includes(problemsValue)) {
       return res.status(400).json({ error: `problems không hợp lệ` });
     }
 
-    const ratesValue = rates;
+    const ratesValue = rates && RATES.includes(rates) ? rates : null;
     if (!RATES.includes(ratesValue)) {
       return res.status(400).json({ error: `rates không hợp lệ` });
     }
