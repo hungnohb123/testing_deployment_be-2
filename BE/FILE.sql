@@ -111,16 +111,6 @@ CREATE TABLE services (
 
   content VARCHAR(255) NOT NULL,
 
-  -- content ENUM(
-  --   'Làm thẻ xe',
-  --   'Sửa chữa căn hộ',
-  --   'Vận chuyển đồ',
-  --   'Dọn dẹp căn hộ',
-  --   'tài sản chung',
-  --   'mất tài sản',
-  --   'Khai báo thông tin'
-  -- ) NOT NULL,
-
   service_type ENUM(
     'Dịch vụ trung cư',
     'Khiếu nại',
@@ -139,6 +129,11 @@ CREATE TABLE services (
 
   handle_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   note        TEXT,
+
+  -- [THÊM MỚI] 3 trường cho Feedback
+  problems    VARCHAR(255) DEFAULT NULL COMMENT 'Vấn đề gặp phải',
+  rates       VARCHAR(50) DEFAULT NULL COMMENT 'Đánh giá chất lượng',
+  scripts     TEXT DEFAULT NULL COMMENT 'Chi tiết phản ánh',
 
   CONSTRAINT fk_services_apartment
     FOREIGN KEY (apartment_id)
@@ -218,7 +213,7 @@ SELECT
   p.transaction_ref, 
   p.feetype, 
   p.payer_account, 
-  p.payer_name,
+  p.payer_name, 
   p.payment_date
 FROM payments p
 JOIN user r ON p.resident_id = r.id;
@@ -232,7 +227,7 @@ SET state = 1,
     payment_date = CURRENT_DATE()
 WHERE transaction_ref = 'TRX20251024-0001';
 
--- 2. Thêm 1 vài notifications mẫu (ĐÃ CẬP NHẬT DỮ LIỆU CHO 2 CỘT MỚI)
+-- 2. Thêm 1 vài notifications mẫu
 INSERT INTO notifications (notification_date, sent_date, apartment_id, content, sender_name, receiver_name) VALUES
   (NOW(), NULL, 'A1-101', 'Ban quản lý thông báo: Căn hộ A1-101 sẽ tạm ngắt điện từ 9h đến 11h sáng ngày 26/10 để bảo trì hệ thống điện tầng 1.', 'Ban Quản Lý', 'Nguyễn Văn A'),
   (NOW(), NULL, 'B2-202', 'Ban quản lý thông báo: Phí dịch vụ tháng 10 của căn hộ B2-202 là 250.000đ. Vui lòng thanh toán trước ngày 30/10.', 'Phòng Kế Toán', 'Trần Thị B'),
@@ -241,16 +236,19 @@ INSERT INTO notifications (notification_date, sent_date, apartment_id, content, 
   (NOW(), NULL, 'E5-505', 'Ban quản lý tòa nhà: Vui lòng đeo thẻ cư dân khi ra vào tòa nhà để đảm bảo an ninh.', 'Ban Quản Trị', NULL);
 
 -- 3. (Tuỳ chọn) Thêm 1 service mẫu để test API /services
-
+-- Đã thêm các trường feedback vào đây
 INSERT INTO services (
-  apartment_id, content, service_type, ben_xu_ly, servicestatus, note
+  apartment_id, content, service_type, ben_xu_ly, servicestatus, note, problems, rates, scripts
 ) VALUES (
   'Tầng 7 - Phòng 713',
   'Làm thẻ xe',
   'Dịch vụ trung cư',
   'Ban quản trị',
   'Đã ghi nhận',
-  'Làm thêm 1 thẻ xe máy'
+  'Làm thêm 1 thẻ xe máy',
+  NULL, -- Chưa có phản ánh
+  NULL, -- Chưa có đánh giá
+  NULL  -- Chưa có chi tiết
 );
 
 -- Xem nhanh dữ liệu
