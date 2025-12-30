@@ -973,12 +973,14 @@ const PROBLEMS = [
   "Thiếu chuyên nghiệp",
   "Chi phí đắt",
   "Ko vấn đề",
+  "Chưa có phản ánh từ cư dân",
 ];
 const RATES = [
   "Chất lượng cao",
   "Chất lượng tốt",
   "Chất lượng ổn",
   "Chất lượng kém",
+  "Chưa có đánh giá từ cư dân",
 ];
 
 app.post("/services", async (req, res) => {
